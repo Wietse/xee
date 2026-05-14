@@ -65,14 +65,16 @@ fn make_wrapper(
     let mut conversions = Vec::new();
     let mut conversion_names = Vec::new();
     let mut adjust = 0;
-    let context_ident = get_injection_ident(ast, adjust, "DynamicContext")?;
-    if let Some(context_ident) = context_ident {
-        conversion_names.push(context_ident);
-        adjust += 1
+    if is_injected_arg(ast, adjust, "context", "DynamicContext")? {
+        // Push the canonical name `context`, which is what the
+        // generated wrapper actually binds. The user's variable name
+        // is irrelevant — Rust binds positionally when we call their
+        // function below.
+        conversion_names.push(Ident::new("context", Span::call_site()));
+        adjust += 1;
     }
-    let interpreter_ident = get_injection_ident(ast, adjust, "Interpreter")?;
-    if let Some(interpreter_ident) = interpreter_ident {
-        conversion_names.push(interpreter_ident);
+    if is_injected_arg(ast, adjust, "interpreter", "Interpreter")? {
+        conversion_names.push(Ident::new("interpreter", Span::call_site()));
         adjust += 1;
     }
 
@@ -122,25 +124,29 @@ fn make_wrapper(
     }))
 }
 
-/// Inspect the argument at `index` in `ast.sig.inputs` and, if its type is
-/// a reference to a struct whose last path segment matches `type_name`,
-/// return the argument's identifier so the macro can pass it through to
-/// the wrapper untouched.
+/// Decide whether the argument at `index` in `ast.sig.inputs` should
+/// be treated as the macro-injected `context` / `interpreter` slot.
+/// `module` and `type_name` identify the expected type (e.g. `context`
+/// and `DynamicContext`).
 ///
-/// Matches the type, not the variable name: `ctx: &DynamicContext` works
-/// just as well as `context: &DynamicContext`. Path-prefix doesn't
-/// matter, so `&crate::context::DynamicContext`,
-/// `&xee_interpreter::context::DynamicContext`, and `&DynamicContext`
-/// all match.
-fn get_injection_ident(
+/// Matches the *type*, not the variable name, so `ctx: &DynamicContext`
+/// works just as well as `context: &DynamicContext`. The match is
+/// deliberately strict on the module qualifier: a bare type name
+/// (`&DynamicContext`) is accepted, and qualified forms are only
+/// accepted when the second-to-last path segment matches the expected
+/// module (so `&context::DynamicContext`,
+/// `&crate::context::DynamicContext`, and
+/// `&xee_interpreter::context::DynamicContext` all qualify, but
+/// `&my_app::DynamicContext` is rejected).
+fn is_injected_arg(
     ast: &ItemFn,
     index: usize,
+    module: &str,
     type_name: &str,
-) -> syn::Result<Option<Ident>> {
+) -> syn::Result<bool> {
     if index >= ast.sig.inputs.len() {
-        return Ok(None);
+        return Ok(false);
     }
-
     let arg = &ast.sig.inputs[index];
     let pat_type = match arg {
         syn::FnArg::Typed(pat_type) => pat_type,
@@ -148,34 +154,33 @@ fn get_injection_ident(
             bail_spanned!(r.span() => "XPath functions cannot take `self` as an argument");
         }
     };
-
-    if !type_ref_last_segment_matches(&pat_type.ty, type_name) {
-        return Ok(None);
-    }
-
-    match &*pat_type.pat {
-        syn::Pat::Ident(ident) => Ok(Some(ident.ident.clone())),
-        _ => bail_spanned!(
-            pat_type.span() =>
-            "XPath functions can only take identifiers as arguments"
-        ),
-    }
+    Ok(matches_xee_type(&pat_type.ty, module, type_name))
 }
 
-/// Return true iff `ty` is `&T` or `&mut T` where the last segment of
-/// `T`'s path matches `type_name`.
-fn type_ref_last_segment_matches(ty: &syn::Type, type_name: &str) -> bool {
+/// Return true iff `ty` is `&T` or `&mut T` where `T` is either the
+/// bare ident `type_name` or a path whose last two segments are
+/// `module::type_name`.
+fn matches_xee_type(ty: &syn::Type, module: &str, type_name: &str) -> bool {
     let syn::Type::Reference(type_ref) = ty else {
         return false;
     };
     let syn::Type::Path(type_path) = &*type_ref.elem else {
         return false;
     };
-    type_path
-        .path
-        .segments
-        .last()
-        .is_some_and(|seg| seg.ident == type_name)
+    let segments = &type_path.path.segments;
+    let Some(last) = segments.last() else {
+        return false;
+    };
+    if last.ident != type_name {
+        return false;
+    }
+    match segments.len() {
+        // Bare `DynamicContext` / `Interpreter`.
+        1 => true,
+        // Qualified path: insist the second-to-last segment is the
+        // expected Xee internal module name. Rejects `&my_app::T`.
+        n => segments[n - 2].ident == module,
+    }
 }
 
 fn is_result(ast: &ItemFn) -> bool {
@@ -321,5 +326,22 @@ mod tests {
         .unwrap();
         // Should succeed — `context` is just a regular parameter.
         assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_wrapper_unrelated_dynamic_context_not_injected() {
+        // `&my_app::DynamicContext` shares the last path segment but
+        // not the module qualifier — must not be silently injected
+        // as Xee's context. Here the user supplies their own type;
+        // the macro should treat it as a regular signature arg, which
+        // means the arity check fires (the signature declares zero
+        // params but the Rust fn has one).
+        let options =
+            parse_str::<XPathFnOptions>(r#""fn:foo() as xs:string""#).unwrap();
+        let ast = parse_str::<ItemFn>(
+            r#"fn foo(ctx: &my_app::DynamicContext) -> String { String::new() }"#,
+        )
+        .unwrap();
+        assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap_err().to_string());
     }
 }

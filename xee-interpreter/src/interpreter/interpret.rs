@@ -1100,7 +1100,13 @@ impl<'a> Interpreter<'a> {
         self.state.regex(pattern, flags)
     }
 
-    pub(crate) fn xot(&self) -> &Xot {
+    /// Macro-support entry point: `#[xpath_fn]`-generated wrappers
+    /// call this when converting atomic-type parameters via
+    /// `Sequence::unboxed_atomized` (which needs the Xot tree).
+    /// Not part of the public API surface; callers outside the
+    /// macro shouldn't name it directly.
+    #[doc(hidden)]
+    pub fn xot(&self) -> &Xot {
         self.state.xot()
     }
 

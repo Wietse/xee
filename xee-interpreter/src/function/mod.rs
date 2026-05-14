@@ -23,4 +23,4 @@ pub use static_function::FunctionRule;
 // them. Each is marked `#[doc(hidden)]` at its declaration.
 pub use static_function::StaticFunctionType;
 pub use static_function::{FunctionKind, StaticFunctionDescription};
-pub(crate) use static_function::{StaticFunction, StaticFunctions};
+pub(crate) use static_function::{ExtensionFunctions, StaticFunction, StaticFunctions};

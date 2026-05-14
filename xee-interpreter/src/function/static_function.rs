@@ -351,4 +351,73 @@ impl StaticFunctions {
     pub fn get_by_index(&self, static_function_id: function::StaticFunctionId) -> &StaticFunction {
         &self.by_index[static_function_id.0]
     }
+
+    /// Number of built-in functions. Used as the base offset for the
+    /// extension-function id space (built-ins occupy `0..N`, extensions
+    /// occupy `N..N+M`).
+    pub(crate) fn builtin_count(&self) -> usize {
+        self.by_index.len()
+    }
+}
+
+/// A registry of host-provided XPath functions, parallel to the built-in
+/// [`StaticFunctions`] table.
+///
+/// Extension ids occupy `base_offset..base_offset + by_index.len()` in
+/// the unified [`function::StaticFunctionId`] space — `base_offset` is
+/// the built-in count, captured at build time. The dispatch helper on
+/// [`crate::context::StaticContext`] routes ids below the offset to the
+/// built-in table and ids at or above to this one.
+#[derive(Debug)]
+pub struct ExtensionFunctions {
+    by_name: HashMap<(Name, u8), function::StaticFunctionId>,
+    by_index: Vec<StaticFunction>,
+    base_offset: usize,
+}
+
+impl ExtensionFunctions {
+    pub(crate) fn build(
+        descriptions: &[StaticFunctionDescription],
+        namespaces: &Namespaces,
+        base_offset: usize,
+    ) -> Result<Self, ParserError> {
+        let mut by_index = Vec::new();
+        for description in descriptions {
+            by_index.extend(description.build(namespaces)?);
+        }
+        let mut by_name = HashMap::new();
+        for (local_idx, static_function) in by_index.iter().enumerate() {
+            // anonymous closures are an internal-only kind and have no
+            // user-visible name, so they don't belong in an extension
+            // registry — skip indexing.
+            if static_function.function_rule == Some(FunctionRule::AnonymousClosure) {
+                continue;
+            }
+            by_name.insert(
+                (static_function.name.clone(), static_function.arity as u8),
+                function::StaticFunctionId(base_offset + local_idx),
+            );
+        }
+        Ok(Self {
+            by_name,
+            by_index,
+            base_offset,
+        })
+    }
+
+    pub(crate) fn get_by_name(&self, name: &Name, arity: u8) -> Option<function::StaticFunctionId> {
+        self.by_name.get(&(name.clone(), arity)).copied()
+    }
+
+    pub(crate) fn get_by_id(
+        &self,
+        static_function_id: function::StaticFunctionId,
+    ) -> Option<&StaticFunction> {
+        let local = static_function_id.0.checked_sub(self.base_offset)?;
+        self.by_index.get(local)
+    }
+
+    pub(crate) fn base_offset(&self) -> usize {
+        self.base_offset
+    }
 }

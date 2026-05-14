@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::rc::Rc;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use iri_string::types::IriAbsoluteStr;
 use iri_string::types::IriAbsoluteString;
@@ -28,6 +28,7 @@ static DEFAULT_COLLATION: LazyLock<IriAbsoluteString> = LazyLock::new(|| {
 pub struct StaticContext {
     parser_context: XPathParserContext,
     functions: &'static function::StaticFunctions,
+    extension_functions: Option<Arc<function::ExtensionFunctions>>,
     // TODO: try to make collations static
     collations: RefCell<Collations>,
     static_base_uri: Option<IriAbsoluteString>,
@@ -44,6 +45,7 @@ impl From<XPathParserContext> for StaticContext {
         Self {
             parser_context,
             functions: &STATIC_FUNCTIONS,
+            extension_functions: None,
             collations: RefCell::new(Collations::new()),
             static_base_uri: None,
         }
@@ -59,9 +61,17 @@ impl StaticContext {
         Self {
             parser_context: XPathParserContext::new(namespaces, variable_names),
             functions: &STATIC_FUNCTIONS,
+            extension_functions: None,
             collations: RefCell::new(Collations::new()),
             static_base_uri,
         }
+    }
+
+    pub(crate) fn set_extension_functions(
+        &mut self,
+        extension_functions: Arc<function::ExtensionFunctions>,
+    ) {
+        self.extension_functions = Some(extension_functions);
     }
 
     pub fn from_namespaces(namespaces: Namespaces) -> Self {
@@ -123,21 +133,40 @@ impl StaticContext {
         self.parser_context.parse_value_template_xpath(s)
     }
 
-    /// Get a static function by id
+    /// Get a static function by id.
+    ///
+    /// The id space unifies built-ins and extensions: ids below the
+    /// built-in count route to [`function::StaticFunctions`], ids at or
+    /// above route to the extension registry.
     pub fn function_by_id(
         &self,
         static_function_id: function::StaticFunctionId,
     ) -> &function::StaticFunction {
-        self.functions.get_by_index(static_function_id)
+        if static_function_id.0 < self.functions.builtin_count() {
+            self.functions.get_by_index(static_function_id)
+        } else {
+            self.extension_functions
+                .as_ref()
+                .expect("extension function id without an extension registry")
+                .get_by_id(static_function_id)
+                .expect("extension function id out of range")
+        }
     }
 
-    /// Get a static function by name and arity
+    /// Get a static function by name and arity.
+    ///
+    /// Built-ins are tried first; extension functions act as a fallback,
+    /// so a host can never shadow a spec-defined function.
     pub fn function_id_by_name(
         &self,
         name: &xot::xmlname::OwnedName,
         arity: u8,
     ) -> Option<function::StaticFunctionId> {
-        self.functions.get_by_name(name, arity)
+        self.functions.get_by_name(name, arity).or_else(|| {
+            self.extension_functions
+                .as_ref()
+                .and_then(|ext| ext.get_by_name(name, arity))
+        })
     }
 
     /// Get an internal static function by name and arity

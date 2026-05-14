@@ -1,7 +1,7 @@
 // In this module, we generate quoted code that converts an incoming
 // Sequence into the required Rust type, using the SequenceType as a guide.
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Ident, TokenStream};
 use quote::quote;
 use syn::spanned::Spanned;
 
@@ -13,13 +13,14 @@ pub(crate) fn convert_sequence_type(
     fn_arg: &syn::FnArg,
     name: TokenStream,
     arg: TokenStream,
+    interp_local: &Ident,
 ) -> syn::Result<TokenStream> {
     match sequence_type {
         ast::SequenceType::Empty => Ok(quote!(
             #[allow(non_snake_case)]
             let #name = #arg.ensure_empty()?;
         )),
-        ast::SequenceType::Item(item) => convert_item(item, fn_arg, name, arg),
+        ast::SequenceType::Item(item) => convert_item(item, fn_arg, name, arg, interp_local),
     }
 }
 
@@ -28,8 +29,9 @@ fn convert_item(
     fn_arg: &syn::FnArg,
     name: TokenStream,
     arg: TokenStream,
+    interp_local: &Ident,
 ) -> syn::Result<TokenStream> {
-    let (iterator, borrow) = convert_item_type(&item.item_type, fn_arg, arg.clone())?;
+    let (iterator, borrow) = convert_item_type(&item.item_type, fn_arg, arg.clone(), interp_local)?;
 
     Ok(match &item.occurrence {
         ast::Occurrence::One => {
@@ -105,16 +107,19 @@ fn convert_item_type(
     item: &ast::ItemType,
     fn_arg: &syn::FnArg,
     arg: TokenStream,
+    interp_local: &Ident,
 ) -> syn::Result<(TokenStream, bool)> {
     match item {
         ast::ItemType::Item => Ok((quote!(#arg.iter().map(Ok)), false)),
         ast::ItemType::AtomicOrUnionType(xs) => {
-            let (token_stream, borrow) = convert_atomic_or_union_type(*xs, fn_arg, arg)?;
+            let (token_stream, borrow) =
+                convert_atomic_or_union_type(*xs, fn_arg, arg, interp_local)?;
             Ok((token_stream, borrow))
         }
-        ast::ItemType::KindTest(kind_test) => {
-            Ok((convert_kind_test(kind_test, fn_arg, arg)?, false))
-        }
+        ast::ItemType::KindTest(kind_test) => Ok((
+            convert_kind_test(kind_test, fn_arg, arg, interp_local)?,
+            false,
+        )),
         // we don't do anything special for higher order functions at this point;
         // the implementation is supposed to manually unpack the items
         ast::ItemType::FunctionTest(_) => Ok((quote!(#arg.iter().map(Ok)), false)),
@@ -139,9 +144,10 @@ fn convert_atomic_or_union_type(
     xs: Xs,
     fn_arg: &syn::FnArg,
     arg: TokenStream,
+    interp_local: &Ident,
 ) -> syn::Result<(TokenStream, bool)> {
     if xs == Xs::AnyAtomicType || xs == Xs::Numeric {
-        return Ok((quote!(#arg.atomized(interpreter.xot())), false));
+        return Ok((quote!(#arg.atomized(#interp_local.xot())), false));
     }
 
     let Some(rust_info) = xs.rust_info() else {
@@ -159,7 +165,7 @@ fn convert_atomic_or_union_type(
 
     let borrow = rust_info.is_reference();
     Ok((
-        quote!(#arg.unboxed_atomized(interpreter.xot(), |atomic| #convert)),
+        quote!(#arg.unboxed_atomized(#interp_local.xot(), |atomic| #convert)),
         borrow,
     ))
 }
@@ -168,6 +174,7 @@ fn convert_kind_test(
     kind_test: &ast::KindTest,
     fn_arg: &syn::FnArg,
     arg: TokenStream,
+    interp_local: &Ident,
 ) -> syn::Result<TokenStream> {
     match kind_test {
         ast::KindTest::Any => Ok(quote!(#arg.nodes())),
@@ -179,7 +186,7 @@ fn convert_kind_test(
                      are not yet supported in #[xpath_fn] signatures — use `element()`"
                 );
             }
-            Ok(quote!(#arg.elements(interpreter.xot())?))
+            Ok(quote!(#arg.elements(#interp_local.xot())?))
         }
         _ => bail_spanned!(
             fn_arg.span() =>
@@ -227,8 +234,9 @@ mod tests {
         let sequence_type = parse_sequence_type(s, &namespaces).unwrap();
         let name = quote!(a);
         let arg = quote!(arguments[0]);
+        let interp_local = Ident::new("interpreter", proc_macro2::Span::call_site());
 
-        convert_sequence_type(&sequence_type, fn_arg, name, arg)
+        convert_sequence_type(&sequence_type, fn_arg, name, arg, &interp_local)
             .unwrap()
             .to_string()
     }
@@ -302,8 +310,9 @@ mod tests {
         let sequence_type = parse_sequence_type(s, &namespaces).unwrap();
         let name = quote!(a);
         let arg = quote!(arguments[0]);
+        let interp_local = Ident::new("interpreter", proc_macro2::Span::call_site());
 
-        convert_sequence_type(&sequence_type, &fn_arg, name, arg)
+        convert_sequence_type(&sequence_type, &fn_arg, name, arg, &interp_local)
             .expect_err("expected a syn::Error from convert_sequence_type")
             .to_string()
     }

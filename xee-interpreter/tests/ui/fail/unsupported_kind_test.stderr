@@ -1,0 +1,5 @@
+error: this kind test is not yet supported in #[xpath_fn] signatures — only `node()`, `element()`, and `item()` work today
+  --> tests/ui/fail/unsupported_kind_test.rs:10:14
+   |
+10 | fn attr_test(a: &Sequence) -> Sequence {
+   |              ^

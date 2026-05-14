@@ -1,0 +1,5 @@
+error: #[xpath_fn] arity mismatch: signature declares 2 XPath parameter(s), but the Rust function takes 1
+ --> tests/ui/fail/arity_too_few.rs:9:4
+  |
+9 | fn short(_s: &xee_interpreter::sequence::Sequence) -> xee_interpreter::sequence::Sequence {
+  |    ^^^^^

@@ -1,0 +1,5 @@
+error: one-or-more occurrence (`+`) is not yet supported in #[xpath_fn] signatures
+ --> tests/ui/fail/nonempty_occurrence.rs:8:17
+  |
+8 | fn nonempty_arg(a: &Sequence) -> Sequence {
+  |                 ^

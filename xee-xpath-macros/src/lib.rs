@@ -12,6 +12,16 @@ use syn::parse_macro_input;
 use parse::XPathFnOptions;
 use wrapper::{strip_injection_attrs, xpath_fn_wrapper};
 
+/// Wrap a Rust function so it can be used as an XPath function.
+///
+/// # Crate-rename limitation
+///
+/// The macro's generated code references types by absolute path,
+/// rooted at `::xee_interpreter` (e.g.
+/// `::xee_interpreter::context::DynamicContext`). This means the
+/// consumer crate must have `xee-interpreter` available in its
+/// dependency namespace under the default name `xee_interpreter`.
+/// Renaming the dependency in `Cargo.toml` will break the macro.
 #[proc_macro_attribute]
 pub fn xpath_fn(
     attr: proc_macro::TokenStream,

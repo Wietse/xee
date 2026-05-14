@@ -16,9 +16,11 @@ pub use inline_function::{CastType, InlineFunction, Name};
 pub use map::Map;
 pub use signature::Signature;
 
-// we allow StaticFunctionType as it's used in the xpath_fn macro
 pub use static_function::FunctionRule;
-#[allow(unused_imports)]
-pub(crate) use static_function::StaticFunctionType;
-pub(crate) use static_function::{FunctionKind, StaticFunctionDescription};
+// The next three are part of the macro-support surface: external code
+// shouldn't name them directly, but the `#[xpath_fn]` and
+// `wrap_xpath_fn!` macros expand to absolute paths that reference
+// them. Each is marked `#[doc(hidden)]` at its declaration.
+pub use static_function::StaticFunctionType;
+pub use static_function::{FunctionKind, StaticFunctionDescription};
 pub(crate) use static_function::{StaticFunction, StaticFunctions};

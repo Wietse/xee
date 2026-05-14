@@ -32,7 +32,8 @@ pub(crate) fn xpath_fn_wrapper(
         #[doc(hidden)]
         #vis mod #name {
             pub(crate) struct MakeWrapper;
-            pub(crate) const WRAPPER: crate::function::StaticFunctionType = MakeWrapper::WRAPPER;
+            pub(crate) const WRAPPER: ::xee_interpreter::function::StaticFunctionType =
+                MakeWrapper::WRAPPER;
             // We store the signature as a string; this means we need to
             // reparse it again later during registration, but it's a lot
             // easier than trying to serialize a data structure, so it will
@@ -49,7 +50,7 @@ pub(crate) fn xpath_fn_wrapper(
             // This is a trick to ensure we can get it into the module defined
             // above
             impl #name::MakeWrapper {
-                const WRAPPER: crate::function::StaticFunctionType = #wrapper_name;
+                const WRAPPER: ::xee_interpreter::function::StaticFunctionType = #wrapper_name;
             }
             #vis #wrapper
         };
@@ -126,10 +127,13 @@ fn make_wrapper(
 
     Ok(quote!(
         fn #wrapper_name(
-            #ctx_local: &crate::context::DynamicContext,
-            #interp_local: &mut crate::interpreter::Interpreter,
-            #args_local: &[crate::sequence::Sequence],
-        ) -> ::std::result::Result<crate::sequence::Sequence, crate::error::Error> {
+            #ctx_local: &::xee_interpreter::context::DynamicContext,
+            #interp_local: &mut ::xee_interpreter::interpreter::Interpreter,
+            #args_local: &[::xee_interpreter::sequence::Sequence],
+        ) -> ::std::result::Result<
+            ::xee_interpreter::sequence::Sequence,
+            ::xee_interpreter::error::Error,
+        > {
             #body
         }
     ))

@@ -45,7 +45,7 @@ fn convert_item(
             };
             quote!(
                 #[allow(non_snake_case)]
-                let #name = crate::occurrence::one(&mut #iterator)?;
+                let #name = ::xee_interpreter::occurrence::one(&mut #iterator)?;
                 #as_ref
             )
         }
@@ -60,7 +60,7 @@ fn convert_item(
             };
             quote!(
                 #[allow(non_snake_case)]
-                let #name = crate::occurrence::option(&mut #iterator)?;
+                let #name = ::xee_interpreter::occurrence::option(&mut #iterator)?;
                 #as_ref
             )
         }

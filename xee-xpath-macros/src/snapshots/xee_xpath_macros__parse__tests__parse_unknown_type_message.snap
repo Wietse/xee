@@ -1,0 +1,9 @@
+---
+source: xee-xpath-macros/src/parse.rs
+expression: "syn::parse_str::<XPathFnOptions>(r#\"\"fn:foo() as xs:bogusType\"\"#)"
+---
+Err(
+    Error(
+        "unexpected end of input, invalid XPath signature `fn:foo() as xs:bogusType`: unknown type `xs:bogusType` at byte position 12..24",
+    ),
+)

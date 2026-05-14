@@ -4,6 +4,6 @@ expression: "syn::parse_str::<XPathFnOptions>(r#\"\"wrong wrong\"\"#)"
 ---
 Err(
     Error(
-        "unexpected end of input, ExpectedFound { span: 6..11 }",
+        "unexpected end of input, invalid XPath signature `wrong wrong`: unexpected token `wrong` at byte position 6..11",
     ),
 )

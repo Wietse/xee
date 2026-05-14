@@ -17,10 +17,13 @@ pub use map::Map;
 pub use signature::Signature;
 
 pub use static_function::FunctionRule;
-// The next three are part of the macro-support surface: external code
-// shouldn't name them directly, but the `#[xpath_fn]` and
-// `wrap_xpath_fn!` macros expand to absolute paths that reference
-// them. Each is marked `#[doc(hidden)]` at its declaration.
-pub use static_function::StaticFunctionType;
-pub use static_function::{FunctionKind, StaticFunctionDescription};
-pub(crate) use static_function::{ExtensionFunctions, StaticFunction, StaticFunctions};
+// `StaticFunctionType` and `FunctionKind` are macro-support surface:
+// external code shouldn't name them, but `#[xpath_fn]` /
+// `wrap_xpath_fn!` expand to absolute paths that reference them. Both
+// are `#[doc(hidden)]` at their declaration.
+pub use static_function::{FunctionKind, StaticFunctionType};
+// Public registry API: a host builds `StaticFunctionDescription`s (via
+// `wrap_xpath_fn!`) and registers them; `ExtensionFunctions` is the
+// resulting per-context table.
+pub use static_function::{ExtensionFunctions, StaticFunctionDescription};
+pub(crate) use static_function::{StaticFunction, StaticFunctions};

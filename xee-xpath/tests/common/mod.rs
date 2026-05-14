@@ -20,7 +20,7 @@ pub(crate) fn run_with_variables(s: &str, variables: Variables) -> error::Result
     let queries = Queries::default();
     let mut static_context_builder = StaticContextBuilder::default();
     static_context_builder.variable_names(variables.keys().cloned());
-    let static_context = static_context_builder.build();
+    let static_context = static_context_builder.build()?;
     let q = queries.sequence_with_context(s, static_context)?;
     q.execute_build_context(&mut documents, |builder| {
         builder.variables(variables);

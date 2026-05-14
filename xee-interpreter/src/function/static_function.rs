@@ -61,13 +61,18 @@ pub type StaticFunctionType = fn(
     arguments: &[sequence::Sequence],
 ) -> error::Result<sequence::Sequence>;
 
+// Produced by `wrap_xpath_fn!` from a `#[xpath_fn]`-annotated function
+// and registered via `StaticContextBuilder::add_function`. Part of the
+// macro-support surface, hence `#[doc(hidden)]`.
 #[doc(hidden)]
+#[derive(Debug)]
 pub struct StaticFunctionDescription {
     pub(crate) source: DescriptionSource,
     pub(crate) function_kind: Option<FunctionKind>,
     pub(crate) func: StaticFunctionType,
 }
 
+#[derive(Debug)]
 pub(crate) enum DescriptionSource {
     // Raw signature string — parsed at registration time against the
     // host's namespace map. This is the path the `#[xpath_fn]` macro

@@ -1065,7 +1065,9 @@ fn run_xpath_with_result(
     let mut builder = context::StaticContextBuilder::default();
     let name = Name::name("result");
     builder.variable_names([name.clone()]);
-    let static_context = builder.build();
+    let static_context = builder
+        .build()
+        .expect("default static context with no extension functions never fails to build");
 
     let queries = Queries::default();
     let q = queries.sequence_with_context(expr, static_context)?;

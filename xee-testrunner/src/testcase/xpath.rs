@@ -101,7 +101,9 @@ impl Runnable<XPathLanguage> for XPathTestCase {
         static_context_builder.namespaces(namespaces);
 
         // now construct a query with that static context
-        let static_context = static_context_builder.build();
+        let static_context = static_context_builder
+            .build()
+            .expect("default static context with no extension functions never fails to build");
         let queries = Queries::default();
         let query = queries.sequence_with_context(&self.test, static_context);
 

@@ -74,6 +74,10 @@ impl StaticContext {
         self.extension_functions = Some(extension_functions);
     }
 
+    pub(crate) fn builtin_function_count(&self) -> usize {
+        self.functions.builtin_count()
+    }
+
     pub fn from_namespaces(namespaces: Namespaces) -> Self {
         Self::new(namespaces, VariableNames::default(), None)
     }

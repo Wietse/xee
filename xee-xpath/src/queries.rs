@@ -41,7 +41,7 @@ impl<'a> Queries<'a> {
     where
         F: Convert<V>,
     {
-        self.one_with_context(s, convert, self.default_static_context_builder.build())
+        self.one_with_context(s, convert, self.default_static_context_builder.build()?)
     }
 
     /// Construct a query that expects a single item result.
@@ -75,7 +75,7 @@ impl<'a> Queries<'a> {
     /// which have the None or empty value. I think this means that
     /// `one_recurse` is not in fact useful.
     pub fn one_recurse(&self, s: &str) -> Result<OneRecurseQuery> {
-        self.one_recurse_with_context(s, self.default_static_context_builder.build())
+        self.one_recurse_with_context(s, self.default_static_context_builder.build()?)
     }
 
     /// Construct a query that expects a single item result, with explicit
@@ -97,7 +97,7 @@ impl<'a> Queries<'a> {
     where
         F: Convert<V>,
     {
-        self.option_with_context(s, convert, self.default_static_context_builder.build())
+        self.option_with_context(s, convert, self.default_static_context_builder.build()?)
     }
 
     /// Construct a query that expects an optional single item result with
@@ -124,7 +124,7 @@ impl<'a> Queries<'a> {
     /// function but through a recursive call that's passed in during
     /// execution.
     pub fn option_recurse(&self, s: &str) -> Result<OptionRecurseQuery> {
-        self.option_recurse_with_context(s, self.default_static_context_builder.build())
+        self.option_recurse_with_context(s, self.default_static_context_builder.build()?)
     }
 
     /// Construct a recursive query that expects an optional single item result, with
@@ -146,7 +146,7 @@ impl<'a> Queries<'a> {
     where
         F: Convert<V>,
     {
-        self.many_with_context(s, convert, self.default_static_context_builder.build())
+        self.many_with_context(s, convert, self.default_static_context_builder.build()?)
     }
 
     /// Construct a query that expects many items as a result, with explicit
@@ -173,7 +173,7 @@ impl<'a> Queries<'a> {
     /// function but through a recursive call that's passed in during
     /// execution.
     pub fn many_recurse(&self, s: &str) -> Result<ManyRecurseQuery> {
-        self.many_recurse_with_context(s, self.default_static_context_builder.build())
+        self.many_recurse_with_context(s, self.default_static_context_builder.build()?)
     }
 
     /// Construct a recursive query that expects many items as a result, with explicit
@@ -193,7 +193,7 @@ impl<'a> Queries<'a> {
     /// This is a low-level API that allows you to get the raw sequence
     /// without converting it into Rust values.
     pub fn sequence(&self, s: &str) -> Result<SequenceQuery> {
-        self.sequence_with_context(s, self.default_static_context_builder.build())
+        self.sequence_with_context(s, self.default_static_context_builder.build()?)
     }
 
     /// Construct a query that gets a [`Sequence`] as a result, with explicit

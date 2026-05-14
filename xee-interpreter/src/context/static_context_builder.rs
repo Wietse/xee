@@ -1,17 +1,22 @@
+use std::sync::Arc;
+
 use ahash::HashMap;
 use iri_string::types::IriAbsoluteString;
 use xee_name::Namespaces;
 use xot::xmlname::OwnedName;
 
 use crate::context;
+use crate::error;
+use crate::function;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct StaticContextBuilder<'a> {
     variable_names: Vec<OwnedName>,
     namespaces: HashMap<&'a str, &'a str>,
     default_element_namespace: &'a str,
     default_function_namespace: &'a str,
     static_base_uri: Option<IriAbsoluteString>,
+    extension_descriptions: Vec<function::StaticFunctionDescription>,
 }
 
 impl<'a> StaticContextBuilder<'a> {
@@ -75,12 +80,47 @@ impl<'a> StaticContextBuilder<'a> {
         self
     }
 
+    /// Register a host-provided XPath function.
+    ///
+    /// Descriptions are typically produced via [`crate::wrap_xpath_fn!`]
+    /// from a Rust function annotated with `#[xpath_fn]`. The signature
+    /// is parsed at [`Self::build`] time against the builder's namespace
+    /// map, so user prefixes (e.g. `xfi:`) work as long as the prefix
+    /// has been registered via [`Self::namespaces`] /
+    /// [`Self::add_namespace`].
+    ///
+    /// Built-in functions defined by the XPath/XSLT specs take
+    /// precedence; an extension that uses the same `(name, arity)` is
+    /// never reachable.
+    pub fn add_function(
+        &mut self,
+        description: function::StaticFunctionDescription,
+    ) -> &mut Self {
+        self.extension_descriptions.push(description);
+        self
+    }
+
+    /// Register multiple host-provided XPath functions. See
+    /// [`Self::add_function`].
+    pub fn add_functions(
+        &mut self,
+        descriptions: impl IntoIterator<Item = function::StaticFunctionDescription>,
+    ) -> &mut Self {
+        self.extension_descriptions.extend(descriptions);
+        self
+    }
+
     /// Build the static context.
     ///
     /// This will always include the default known namespaces for
     /// XPath, and the default function namespace will be the `fn` namespace
     /// if not set.
-    pub fn build(&self) -> context::StaticContext {
+    ///
+    /// Returns an error if an extension function registered via
+    /// [`Self::add_function`] has a signature that fails to parse
+    /// against the builder's namespace map (e.g. uses an undeclared
+    /// prefix).
+    pub fn build(&self) -> error::Result<context::StaticContext> {
         let mut namespaces = Namespaces::default_namespaces();
         for (prefix, uri) in &self.namespaces {
             namespaces.insert(prefix.to_string(), uri.to_string());
@@ -96,7 +136,17 @@ impl<'a> StaticContextBuilder<'a> {
             default_function_namespace.to_string(),
         );
         let variable_names = self.variable_names.clone().into_iter().collect();
-        context::StaticContext::new(namespaces, variable_names, self.static_base_uri.clone())
+        let mut static_context =
+            context::StaticContext::new(namespaces, variable_names, self.static_base_uri.clone());
+        if !self.extension_descriptions.is_empty() {
+            let extensions = function::ExtensionFunctions::build(
+                &self.extension_descriptions,
+                static_context.namespaces(),
+                static_context.builtin_function_count(),
+            )?;
+            static_context.set_extension_functions(Arc::new(extensions));
+        }
+        Ok(static_context)
     }
 }
 
@@ -118,7 +168,7 @@ mod tests {
     #[test]
     fn test_default_behavior() {
         let builder = StaticContextBuilder::default();
-        let static_context = builder.build();
+        let static_context = builder.build().unwrap();
         assert_eq!(static_context.namespaces().default_element_namespace(), "");
         assert_eq!(
             static_context.namespaces().default_function_namespace,

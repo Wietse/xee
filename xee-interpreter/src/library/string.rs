@@ -785,12 +785,12 @@ pub(crate) fn static_function_descriptions() -> Vec<StaticFunctionDescription> {
             vec![Some(arg_type.clone()); arity],
             Some(string_type.clone()),
         );
-        r.push(StaticFunctionDescription {
-            name: name.clone(),
+        r.push(StaticFunctionDescription::from_parsed(
+            concat,
+            name.clone(),
             signature,
-            function_kind: None,
-            func: concat,
-        });
+            None,
+        ));
     }
     r
 }

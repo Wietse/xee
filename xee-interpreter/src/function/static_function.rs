@@ -3,7 +3,7 @@ use std::fmt::{Debug, Formatter};
 use xot::xmlname::NameStrInfo;
 
 use xee_name::{Name, Namespaces};
-use xee_xpath_ast::ast;
+use xee_xpath_ast::{ast, ParserError};
 
 use crate::context::DynamicContext;
 use crate::error;
@@ -63,24 +63,39 @@ pub type StaticFunctionType = fn(
 
 #[doc(hidden)]
 pub struct StaticFunctionDescription {
-    pub(crate) name: Name,
-    pub(crate) signature: function::Signature,
+    pub(crate) source: DescriptionSource,
     pub(crate) function_kind: Option<FunctionKind>,
     pub(crate) func: StaticFunctionType,
 }
 
+pub(crate) enum DescriptionSource {
+    // Raw signature string — parsed at registration time against the
+    // host's namespace map. This is the path the `#[xpath_fn]` macro
+    // takes; it lets extension authors use their own namespace prefixes
+    // (e.g. `xfi:`) in signatures.
+    Raw(&'static str),
+    // Pre-parsed name + signature, for the rare library entries that
+    // can't go through the macro: zero-arg position/last (no Rust fn
+    // to wrap) and variadic concat (one entry per arity).
+    Parsed {
+        name: Name,
+        signature: function::Signature,
+    },
+}
+
 // Wraps a Rust function annotated with `#[xpath_fn]` and turns it
-// into a StaticFunctionDescription
+// into a StaticFunctionDescription. Signature parsing is deferred —
+// the description carries the raw signature string and is resolved
+// against a namespace map at registration time (see
+// `StaticFunctionDescription::build`).
 #[macro_export]
 macro_rules! wrap_xpath_fn {
     ($function:path) => {{
         use $function as wrapped_function;
-        let namespaces = &xee_name::DEFAULT_NAMESPACES;
         $crate::function::StaticFunctionDescription::new(
             wrapped_function::WRAPPER,
             wrapped_function::SIGNATURE,
             $crate::function::FunctionKind::parse(wrapped_function::KIND),
-            namespaces,
         )
     }};
 }
@@ -89,42 +104,53 @@ impl StaticFunctionDescription {
     #[doc(hidden)]
     pub fn new(
         func: StaticFunctionType,
-        signature: &str,
+        signature_str: &'static str,
         function_kind: Option<FunctionKind>,
-        namespaces: &Namespaces,
     ) -> Self {
-        // TODO reparse signature; the macro could have stored the parsed
-        // version as code, but that's more work than I'm prepared to do
-        // right now.
-        let signature = ast::Signature::parse(signature, namespaces)
-            .expect("Signature parse failed unexpectedly");
-        let name = signature.name.value.clone();
-        let signature: function::Signature = signature.into();
         Self {
-            name,
-            signature,
+            source: DescriptionSource::Raw(signature_str),
             function_kind,
             func,
         }
     }
 
-    fn functions(&self) -> Vec<StaticFunction> {
-        if let Some(function_kind) = &self.function_kind {
-            self.signature
+    pub(crate) fn from_parsed(
+        func: StaticFunctionType,
+        name: Name,
+        signature: function::Signature,
+        function_kind: Option<FunctionKind>,
+    ) -> Self {
+        Self {
+            source: DescriptionSource::Parsed { name, signature },
+            function_kind,
+            func,
+        }
+    }
+
+    pub(crate) fn build(
+        &self,
+        namespaces: &Namespaces,
+    ) -> Result<Vec<StaticFunction>, ParserError> {
+        let (name, signature) = match &self.source {
+            DescriptionSource::Raw(s) => {
+                let parsed = ast::Signature::parse(s, namespaces)?;
+                let name = parsed.name.value.clone();
+                let signature: function::Signature = parsed.into();
+                (name, signature)
+            }
+            DescriptionSource::Parsed { name, signature } => (name.clone(), signature.clone()),
+        };
+        Ok(if let Some(function_kind) = &self.function_kind {
+            signature
                 .alternative_signatures(*function_kind)
                 .into_iter()
                 .map(|(signature, function_kind)| {
-                    StaticFunction::new(self.func, self.name.clone(), signature, function_kind)
+                    StaticFunction::new(self.func, name.clone(), signature, function_kind)
                 })
                 .collect()
         } else {
-            vec![StaticFunction::new(
-                self.func,
-                self.name.clone(),
-                self.signature.clone(),
-                None,
-            )]
-        }
+            vec![StaticFunction::new(self.func, name, signature, None)]
+        })
     }
 }
 
@@ -285,7 +311,10 @@ impl StaticFunctions {
         let descriptions = static_function_descriptions();
         let mut by_index = Vec::new();
         for description in descriptions {
-            by_index.extend(description.functions());
+            let functions = description
+                .build(&xee_name::DEFAULT_NAMESPACES)
+                .expect("built-in signature failed to parse against DEFAULT_NAMESPACES");
+            by_index.extend(functions);
         }
 
         for (i, static_function) in by_index.iter().enumerate() {

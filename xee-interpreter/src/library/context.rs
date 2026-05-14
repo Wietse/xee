@@ -76,26 +76,26 @@ fn static_base_uri(context: &DynamicContext) -> Option<atomic::Atomic> {
 
 pub(crate) fn static_function_descriptions() -> Vec<StaticFunctionDescription> {
     vec![
-        StaticFunctionDescription {
-            name: Name::new(
+        StaticFunctionDescription::from_parsed(
+            bound_position,
+            Name::new(
                 "position".to_string(),
                 FN_NAMESPACE.to_string(),
                 String::new(),
             ),
-            signature: ast::Signature::parse("fn:position() as xs:integer", &Namespaces::default())
+            ast::Signature::parse("fn:position() as xs:integer", &Namespaces::default())
                 .unwrap()
                 .into(),
-            function_kind: Some(FunctionKind::Position),
-            func: bound_position,
-        },
-        StaticFunctionDescription {
-            name: Name::new("last".to_string(), FN_NAMESPACE.to_string(), String::new()),
-            signature: ast::Signature::parse("fn:last() as xs:integer", &Namespaces::default())
+            Some(FunctionKind::Position),
+        ),
+        StaticFunctionDescription::from_parsed(
+            bound_last,
+            Name::new("last".to_string(), FN_NAMESPACE.to_string(), String::new()),
+            ast::Signature::parse("fn:last() as xs:integer", &Namespaces::default())
                 .unwrap()
                 .into(),
-            function_kind: Some(FunctionKind::Size),
-            func: bound_last,
-        },
+            Some(FunctionKind::Size),
+        ),
         wrap_xpath_fn!(current_date_time),
         wrap_xpath_fn!(current_date),
         wrap_xpath_fn!(current_time),

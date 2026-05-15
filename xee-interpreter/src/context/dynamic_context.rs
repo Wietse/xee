@@ -1,12 +1,32 @@
 use ahash::{AHashMap, HashMap};
 use iri_string::types::{IriStr, IriString};
-use std::fmt::Debug;
+use std::any::Any;
+use std::fmt::{self, Debug};
+use std::sync::Arc;
 
 use crate::function::{self, Function};
 use crate::{error::Error, interpreter::Program};
 use crate::{interpreter, sequence};
 
 use super::{DocumentsRef, StaticContext};
+
+/// Host-provided state attached to a [`DynamicContext`], stored
+/// type-erased. Wraps `Arc<dyn Any>` so the context's `Debug` derive
+/// still works (a bare `dyn Any` is not `Debug`).
+#[derive(Clone)]
+pub(crate) struct UserData(Arc<dyn Any + Send + Sync>);
+
+impl UserData {
+    pub(crate) fn new<T: Any + Send + Sync>(value: Arc<T>) -> Self {
+        Self(value)
+    }
+}
+
+impl Debug for UserData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("UserData(..)")
+    }
+}
 
 /// A map of variables
 ///
@@ -41,6 +61,9 @@ pub struct DynamicContext<'a> {
     uri_collections: HashMap<IriString, sequence::Sequence>,
     // environment variables
     environment_variables: HashMap<String, String>,
+    // a single typed slot of host-provided state, reachable from
+    // extension functions via the typed `user_data` accessor
+    user_data: Option<UserData>,
 }
 
 impl<'a> DynamicContext<'a> {
@@ -56,6 +79,7 @@ impl<'a> DynamicContext<'a> {
         default_uri_collection: Option<sequence::Sequence>,
         uri_collections: HashMap<IriString, sequence::Sequence>,
         environment_variables: HashMap<String, String>,
+        user_data: Option<UserData>,
     ) -> Self {
         Self {
             program,
@@ -68,6 +92,7 @@ impl<'a> DynamicContext<'a> {
             default_uri_collection,
             uri_collections,
             environment_variables,
+            user_data,
         }
     }
 
@@ -119,6 +144,17 @@ impl<'a> DynamicContext<'a> {
         self.environment_variables.get(name).map(String::as_str)
     }
 
+    /// Access the host-provided user data, downcast to `T`.
+    ///
+    /// Returns `None` if no user data was set on the
+    /// [`super::DynamicContextBuilder`], or if it was set to a type
+    /// other than `T`. Extension functions use this to reach host
+    /// state (e.g. an XBRL DTS handle) through the `&DynamicContext`
+    /// they are passed.
+    pub fn user_data<T: Any + Send + Sync>(&self) -> Option<&T> {
+        self.user_data.as_ref()?.0.downcast_ref::<T>()
+    }
+
     /// Access all environment variable names
     pub fn environment_variable_names(&self) -> impl Iterator<Item = &str> {
         self.environment_variables.keys().map(String::as_str)
@@ -162,5 +198,57 @@ impl<'a> DynamicContext<'a> {
         id: function::InlineFunctionId,
     ) -> &function::InlineFunction {
         self.program.inline_function(id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::StaticContext;
+    use crate::interpreter::Program;
+
+    #[derive(Debug)]
+    struct HostState {
+        label: String,
+    }
+
+    fn empty_program() -> Program {
+        Program::new(StaticContext::default(), (0..0).into())
+    }
+
+    #[test]
+    fn user_data_round_trips_typed() {
+        let program = empty_program();
+        let mut builder = program.dynamic_context_builder();
+        builder.user_data(Arc::new(HostState {
+            label: "dts".to_string(),
+        }));
+        let context = builder.build();
+
+        let state = context
+            .user_data::<HostState>()
+            .expect("user data should be present");
+        assert_eq!(state.label, "dts");
+    }
+
+    #[test]
+    fn user_data_wrong_type_returns_none() {
+        let program = empty_program();
+        let mut builder = program.dynamic_context_builder();
+        builder.user_data(Arc::new(HostState {
+            label: "dts".to_string(),
+        }));
+        let context = builder.build();
+
+        assert!(context.user_data::<String>().is_none());
+    }
+
+    #[test]
+    fn user_data_unset_returns_none() {
+        let program = empty_program();
+        let builder = program.dynamic_context_builder();
+        let context = builder.build();
+
+        assert!(context.user_data::<HostState>().is_none());
     }
 }

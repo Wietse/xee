@@ -1,3 +1,5 @@
+use std::any::Any;
+use std::sync::Arc;
 use std::{cell::RefCell, ops::Deref, rc::Rc};
 
 use ahash::{HashMap, HashMapExt};
@@ -5,6 +7,7 @@ use iri_string::types::{IriStr, IriString};
 
 use crate::{interpreter, sequence, xml};
 
+use super::dynamic_context::UserData;
 use super::{DynamicContext, Variables};
 
 /// A builder for constructing a [`DynamicContext`].
@@ -26,6 +29,7 @@ pub struct DynamicContextBuilder<'a> {
     default_uri_collection: Option<sequence::Sequence>,
     uri_collections: HashMap<IriString, sequence::Sequence>,
     environment_variables: HashMap<String, String>,
+    user_data: Option<UserData>,
 }
 
 /// A shallow wrapper around a collection of XML documents
@@ -73,6 +77,7 @@ impl<'a> DynamicContextBuilder<'a> {
             default_uri_collection: None,
             uri_collections: HashMap::new(),
             environment_variables: HashMap::new(),
+            user_data: None,
         }
     }
 
@@ -157,6 +162,18 @@ impl<'a> DynamicContextBuilder<'a> {
         self
     }
 
+    /// Attach a single slot of host-provided state to the
+    /// [`DynamicContext`].
+    ///
+    /// Extension functions reach this through
+    /// [`DynamicContext::user_data`], downcast to the original type.
+    /// There is one slot per context — wrap multiple kinds of state in
+    /// one struct. Calling this again replaces the slot.
+    pub fn user_data<T: Any + Send + Sync>(&mut self, value: Arc<T>) -> &mut Self {
+        self.user_data = Some(UserData::new(value));
+        self
+    }
+
     fn uris_into_sequence(uris: &[&IriStr]) -> sequence::Sequence {
         // turn the URIs into a sequence
         let items: Vec<sequence::Item> = uris
@@ -182,6 +199,7 @@ impl<'a> DynamicContextBuilder<'a> {
             self.default_uri_collection.clone(),
             self.uri_collections.clone(),
             self.environment_variables.clone(),
+            self.user_data.clone(),
         )
     }
 }

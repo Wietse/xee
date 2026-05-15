@@ -50,6 +50,15 @@ pub enum Error {
     /// `StaticContextBuilder::build`.
     ExtensionFunctionConflict(String),
 
+    /// Too many extension functions registered.
+    ///
+    /// Function ids are stored as `u16` in bytecode. Registering enough
+    /// extension functions to push the highest id past `u16::MAX` would
+    /// silently corrupt dispatch, so `StaticContextBuilder::build`
+    /// rejects it. Reaching this requires tens of thousands of
+    /// functions — it is a guard, not an expected condition.
+    ExtensionFunctionLimitExceeded(String),
+
     // XPath error conditions: https://www.w3.org/TR/xpath-31/#id-errors
     /// Component absent in static context.
     ///  
@@ -792,6 +801,7 @@ impl Error {
             Error::Application(app_error) => app_error.description(),
             Error::Unsupported(reason) => reason,
             Error::ExtensionFunctionConflict(reason) => reason,
+            Error::ExtensionFunctionLimitExceeded(reason) => reason,
             _ => self.documentation_pieces().0,
         }
     }

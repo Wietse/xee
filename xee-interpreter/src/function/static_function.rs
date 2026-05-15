@@ -401,6 +401,19 @@ impl ExtensionFunctions {
         for description in descriptions {
             by_index.extend(description.build(namespaces)?);
         }
+        // Function ids are stored as `u16` in bytecode (see
+        // `StaticFunctionId::as_u16`). The highest extension id is
+        // `base_offset + by_index.len() - 1`; if it exceeds `u16::MAX`
+        // dispatch would silently wrap. Reject rather than corrupt.
+        if base_offset + by_index.len() > u16::MAX as usize + 1 {
+            return Err(error::Error::ExtensionFunctionLimitExceeded(format!(
+                "{} extension function entries plus {} built-ins exceed the \
+                 {}-id limit of the function id space",
+                by_index.len(),
+                base_offset,
+                u16::MAX,
+            )));
+        }
         let mut by_name = HashMap::new();
         for (local_idx, static_function) in by_index.iter().enumerate() {
             // anonymous closures are an internal-only kind and have no

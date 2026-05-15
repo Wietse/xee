@@ -380,12 +380,19 @@ pub struct ExtensionFunctions {
     base_offset: usize,
 }
 
+/// Format an extension function's `(name, arity)` for error messages,
+/// e.g. `Q{http://example.com/ns}foo#2`.
+fn extension_function_label(name: &Name, arity: u8) -> String {
+    format!("Q{{{}}}{}#{}", name.namespace(), name.local_name(), arity)
+}
+
 impl ExtensionFunctions {
     pub(crate) fn build(
         descriptions: &[StaticFunctionDescription],
         namespaces: &Namespaces,
-        base_offset: usize,
-    ) -> Result<Self, ParserError> {
+        builtins: &StaticFunctions,
+    ) -> error::Result<Self> {
+        let base_offset = builtins.builtin_count();
         let mut by_index = Vec::new();
         for description in descriptions {
             by_index.extend(description.build(namespaces)?);
@@ -398,10 +405,31 @@ impl ExtensionFunctions {
             if static_function.function_rule == Some(FunctionRule::AnonymousClosure) {
                 continue;
             }
-            by_name.insert(
-                (static_function.name.clone(), static_function.arity as u8),
-                function::StaticFunctionId(base_offset + local_idx),
-            );
+            let name = static_function.name.clone();
+            let arity = static_function.arity as u8;
+            // Built-in spec functions are un-shadowable: an extension
+            // colliding with one could never be reached, so reject it
+            // rather than silently dropping it.
+            if builtins.get_by_name(&name, arity).is_some() {
+                return Err(error::Error::ExtensionFunctionConflict(format!(
+                    "extension function {} shadows a built-in function",
+                    extension_function_label(&name, arity),
+                )));
+            }
+            // Two extensions with the same (name, arity) would make
+            // dispatch order-dependent — reject the collision.
+            if by_name
+                .insert(
+                    (name.clone(), arity),
+                    function::StaticFunctionId(base_offset + local_idx),
+                )
+                .is_some()
+            {
+                return Err(error::Error::ExtensionFunctionConflict(format!(
+                    "extension function {} is registered more than once",
+                    extension_function_label(&name, arity),
+                )));
+            }
         }
         Ok(Self {
             by_name,

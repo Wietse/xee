@@ -78,6 +78,10 @@ impl StaticContext {
         self.functions.builtin_count()
     }
 
+    pub(crate) fn builtin_functions(&self) -> &'static function::StaticFunctions {
+        self.functions
+    }
+
     pub fn from_namespaces(namespaces: Namespaces) -> Self {
         Self::new(namespaces, VariableNames::default(), None)
     }

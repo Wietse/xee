@@ -82,20 +82,25 @@ impl<'a> StaticContextBuilder<'a> {
 
     /// Register a host-provided XPath function.
     ///
-    /// Descriptions are typically produced via [`crate::wrap_xpath_fn!`]
-    /// from a Rust function annotated with `#[xpath_fn]`. The signature
-    /// is parsed at [`Self::build`] time against the builder's namespace
-    /// map, so user prefixes (e.g. `xfi:`) work as long as the prefix
-    /// has been registered via [`Self::namespaces`] /
-    /// [`Self::add_namespace`].
+    /// Descriptions are produced via [`crate::wrap_xpath_fn!`] from a
+    /// Rust function annotated with `#[xpath_fn]`. In the `#[xpath_fn]`
+    /// signature, name the function with a braced-URI EQName —
+    /// `Q{http://example.com/ns}local` — for any namespace outside the
+    /// XPath defaults. `#[xpath_fn]` parses the signature against the
+    /// standard namespaces at macro-expansion time, so a *prefixed*
+    /// QName (`myns:local`) is rejected there, before [`Self::build`]
+    /// ever runs; a braced URI carries the namespace literally and has
+    /// no such problem.
     ///
-    /// Built-in functions defined by the XPath/XSLT specs take
-    /// precedence; an extension that uses the same `(name, arity)` is
-    /// never reachable.
-    pub fn add_function(
-        &mut self,
-        description: function::StaticFunctionDescription,
-    ) -> &mut Self {
+    /// [`Self::add_namespace`] governs the prefixes a *query author*
+    /// may use in an XPath expression; it does not affect how
+    /// `#[xpath_fn]` signatures are parsed.
+    ///
+    /// Built-in functions defined by the XPath/XSLT specs may not be
+    /// shadowed: registering an extension whose `(name, arity)` matches
+    /// a built-in — or matches another registered extension — makes
+    /// [`Self::build`] return an error.
+    pub fn add_function(&mut self, description: function::StaticFunctionDescription) -> &mut Self {
         self.extension_descriptions.push(description);
         self
     }
@@ -117,9 +122,9 @@ impl<'a> StaticContextBuilder<'a> {
     /// if not set.
     ///
     /// Returns an error if an extension function registered via
-    /// [`Self::add_function`] has a signature that fails to parse
-    /// against the builder's namespace map (e.g. uses an undeclared
-    /// prefix).
+    /// [`Self::add_function`] has a signature that fails to parse, or
+    /// whose `(name, arity)` collides with a built-in function or with
+    /// another registered extension.
     pub fn build(&self) -> error::Result<context::StaticContext> {
         let mut namespaces = Namespaces::default_namespaces();
         for (prefix, uri) in &self.namespaces {
@@ -142,7 +147,7 @@ impl<'a> StaticContextBuilder<'a> {
             let extensions = function::ExtensionFunctions::build(
                 &self.extension_descriptions,
                 static_context.namespaces(),
-                static_context.builtin_function_count(),
+                static_context.builtin_functions(),
             )?;
             static_context.set_extension_functions(Arc::new(extensions));
         }
@@ -203,17 +208,11 @@ mod tests {
             a + b
         }
 
-        #[xpath_fn("Q{http://www.xbrl.org/2008/function/instance}identity($n as xs:integer) as xs:integer")]
+        #[xpath_fn(
+            "Q{http://www.xbrl.org/2008/function/instance}identity($n as xs:integer) as xs:integer"
+        )]
         fn xfi_identity(n: IBig) -> IBig {
             n
-        }
-
-        fn fn_name(local: &str) -> OwnedName {
-            OwnedName::new(
-                local.to_string(),
-                Namespaces::FN_NAMESPACE.to_string(),
-                "".to_string(),
-            )
         }
 
         fn xfi_name(local: &str) -> OwnedName {
@@ -259,21 +258,36 @@ mod tests {
         }
 
         #[test]
-        fn extension_cannot_shadow_builtin() {
+        fn extension_colliding_with_builtin_is_a_build_error() {
             let mut builder = StaticContextBuilder::default();
-            // fn:abs#1 is a built-in.
+            // fn:abs#1 is a built-in — registering it as an extension
+            // could never be reachable, so build() must reject it.
             builder.add_function(StaticFunctionDescription::new(
                 dummy_func,
                 "Q{http://www.w3.org/2005/xpath-functions}abs($n as xs:integer) as xs:integer",
                 None,
             ));
-            let ctx = builder.build().unwrap();
+            assert!(builder.build().is_err());
+        }
 
-            let id = ctx.function_id_by_name(&fn_name("abs"), 1).unwrap();
-            assert!(
-                (id.as_u16() as usize) < ctx.builtin_function_count(),
-                "built-in fn:abs#1 must win over an extension with the same (name, arity)"
-            );
+        #[test]
+        fn duplicate_extension_registration_is_a_build_error() {
+            // Two different functions claiming the same (name, arity)
+            // would make dispatch order-dependent — build() rejects it.
+            let mut builder = StaticContextBuilder::default();
+            builder.add_functions([
+                StaticFunctionDescription::new(
+                    dummy_func,
+                    "Q{http://example.com/ext}add($a as xs:integer) as xs:integer",
+                    None,
+                ),
+                StaticFunctionDescription::new(
+                    dummy_func,
+                    "Q{http://example.com/ext}add($a as xs:integer) as xs:integer",
+                    None,
+                ),
+            ]);
+            assert!(builder.build().is_err());
         }
 
         #[test]

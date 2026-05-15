@@ -42,6 +42,14 @@ pub enum Error {
     /// The query was created with a different queries collection.
     UsedQueryWithWrongQueries,
 
+    /// Extension function registration conflict.
+    ///
+    /// A host-registered extension function has a `(name, arity)` that
+    /// collides with a built-in function or with another registered
+    /// extension, so it could never be reached. Raised by
+    /// `StaticContextBuilder::build`.
+    ExtensionFunctionConflict(String),
+
     // XPath error conditions: https://www.w3.org/TR/xpath-31/#id-errors
     /// Component absent in static context.
     ///  
@@ -783,6 +791,7 @@ impl Error {
         match self {
             Error::Application(app_error) => app_error.description(),
             Error::Unsupported(reason) => reason,
+            Error::ExtensionFunctionConflict(reason) => reason,
             _ => self.documentation_pieces().0,
         }
     }

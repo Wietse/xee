@@ -3067,6 +3067,7 @@ dependencies = [
  "xee-schema-type",
  "xee-xpath-ast",
  "xee-xpath-compiler",
+ "xee-xpath-macros",
  "xot",
 ]
 

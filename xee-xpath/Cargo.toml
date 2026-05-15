@@ -34,6 +34,7 @@ iri-string = { workspace = true }
 insta = { workspace = true, features = ["yaml", "glob"] }
 rust_decimal_macros = { workspace = true }
 divan = "0.1.17"
+xee-xpath-macros = { path = "../xee-xpath-macros", version = "0.1.4" }
 
 [[bench]]
 name = "xpath"

@@ -188,7 +188,7 @@ mod tests {
 
     mod extension_function_registry {
         use super::*;
-        use crate::function::StaticFunctionDescription;
+        use crate::function::{FunctionKind, StaticFunctionDescription};
         use crate::wrap_xpath_fn;
         use ibig::IBig;
         use xee_xpath_macros::xpath_fn;
@@ -284,6 +284,31 @@ mod tests {
                 StaticFunctionDescription::new(
                     dummy_func,
                     "Q{http://example.com/ext}add($a as xs:integer) as xs:integer",
+                    None,
+                ),
+            ]);
+            assert!(builder.build().is_err());
+        }
+
+        #[test]
+        fn conflict_via_function_kind_arity_expansion_is_a_build_error() {
+            // `FunctionKind::ItemFirst` (the `context_first` overload)
+            // expands one description into two `(name, arity)` entries —
+            // here arity 1 and arity 0. The second description states
+            // arity 0 directly. The collision is therefore produced by
+            // the *expansion*, not by a directly-stated arity on both
+            // sides — exercising that the conflict check covers every
+            // expanded entry.
+            let mut builder = StaticContextBuilder::default();
+            builder.add_functions([
+                StaticFunctionDescription::new(
+                    dummy_func,
+                    "Q{http://example.com/ext}foo($x as xs:integer) as xs:integer",
+                    Some(FunctionKind::ItemFirst),
+                ),
+                StaticFunctionDescription::new(
+                    dummy_func,
+                    "Q{http://example.com/ext}foo() as xs:integer",
                     None,
                 ),
             ]);

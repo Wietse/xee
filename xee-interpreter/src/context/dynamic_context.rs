@@ -252,4 +252,22 @@ mod tests {
 
         assert!(context.user_data::<HostState>().is_none());
     }
+
+    #[test]
+    fn user_data_last_write_wins() {
+        let program = empty_program();
+        let mut builder = program.dynamic_context_builder();
+        builder.user_data(Arc::new(HostState {
+            label: "first".to_string(),
+        }));
+        builder.user_data(Arc::new(HostState {
+            label: "second".to_string(),
+        }));
+        let context = builder.build();
+
+        let state = context
+            .user_data::<HostState>()
+            .expect("user data should be present");
+        assert_eq!(state.label, "second");
+    }
 }

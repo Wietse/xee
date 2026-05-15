@@ -188,16 +188,24 @@ mod tests {
         use ibig::IBig;
         use xee_xpath_macros::xpath_fn;
 
-        const XFI_NS: &str = "http://xbrl.org/2008/function/instance";
+        const XFI_NS: &str = "http://www.xbrl.org/2008/function/instance";
 
-        // A macro-defined extension function in a namespace that's part
-        // of the macro's default namespace table (`fn:`). The custom-
-        // namespace path is exercised separately via raw-description
-        // construction below — at present the `#[xpath_fn]` macro only
-        // accepts prefixes that resolve against `DEFAULT_NAMESPACES`.
-        #[xpath_fn("fn:test-extension-add($a as xs:integer, $b as xs:integer) as xs:integer")]
-        fn test_extension_add(a: IBig, b: IBig) -> IBig {
+        // Extension functions name themselves with `Q{uri}local`
+        // notation. The braced URI is a literal, so it carries no
+        // prefix to resolve — the `#[xpath_fn]` macro parses the
+        // signature at expansion time against `DEFAULT_NAMESPACES`
+        // without any extra namespace setup, and the parameter/return
+        // types stay in the standard `xs:` / untyped namespaces.
+        #[xpath_fn(
+            "Q{http://www.xbrl.org/2008/function/instance}add($a as xs:integer, $b as xs:integer) as xs:integer"
+        )]
+        fn xfi_add(a: IBig, b: IBig) -> IBig {
             a + b
+        }
+
+        #[xpath_fn("Q{http://www.xbrl.org/2008/function/instance}identity($n as xs:integer) as xs:integer")]
+        fn xfi_identity(n: IBig) -> IBig {
+            n
         }
 
         fn fn_name(local: &str) -> OwnedName {
@@ -223,11 +231,13 @@ mod tests {
         #[test]
         fn macro_defined_extension_resolves_to_extension_id() {
             let mut builder = StaticContextBuilder::default();
-            builder.add_function(wrap_xpath_fn!(test_extension_add));
+            builder.add_function(wrap_xpath_fn!(xfi_add));
+            // No `add_namespace` call: the `Q{uri}` signature resolves
+            // without the host registering anything for the signature.
             let ctx = builder.build().expect("build should succeed");
 
             let id = ctx
-                .function_id_by_name(&fn_name("test-extension-add"), 2)
+                .function_id_by_name(&xfi_name("add"), 2)
                 .expect("extension must resolve by name");
             assert!(
                 (id.as_u16() as usize) >= ctx.builtin_function_count(),
@@ -238,40 +248,14 @@ mod tests {
         }
 
         #[test]
-        fn raw_description_resolves_under_custom_namespace() {
-            let mut builder = StaticContextBuilder::default();
-            builder.add_namespace("xfi", XFI_NS);
-            builder.add_function(StaticFunctionDescription::new(
-                dummy_func,
-                "xfi:add($a as xs:integer, $b as xs:integer) as xs:integer",
-                None,
-            ));
-            let ctx = builder.build().expect("build should succeed");
-
-            assert!(ctx.function_id_by_name(&xfi_name("add"), 2).is_some());
-        }
-
-        #[test]
         fn registers_multiple_functions_at_distinct_ids() {
             let mut builder = StaticContextBuilder::default();
-            builder.add_namespace("xfi", XFI_NS);
-            builder.add_functions([
-                StaticFunctionDescription::new(
-                    dummy_func,
-                    "xfi:one($a as xs:integer) as xs:integer",
-                    None,
-                ),
-                StaticFunctionDescription::new(
-                    dummy_func,
-                    "xfi:two($a as xs:integer) as xs:integer",
-                    None,
-                ),
-            ]);
+            builder.add_functions([wrap_xpath_fn!(xfi_add), wrap_xpath_fn!(xfi_identity)]);
             let ctx = builder.build().unwrap();
 
-            let id_one = ctx.function_id_by_name(&xfi_name("one"), 1).unwrap();
-            let id_two = ctx.function_id_by_name(&xfi_name("two"), 1).unwrap();
-            assert_ne!(id_one.as_u16(), id_two.as_u16());
+            let id_add = ctx.function_id_by_name(&xfi_name("add"), 2).unwrap();
+            let id_identity = ctx.function_id_by_name(&xfi_name("identity"), 1).unwrap();
+            assert_ne!(id_add.as_u16(), id_identity.as_u16());
         }
 
         #[test]
@@ -280,7 +264,7 @@ mod tests {
             // fn:abs#1 is a built-in.
             builder.add_function(StaticFunctionDescription::new(
                 dummy_func,
-                "fn:abs($n as xs:integer) as xs:integer",
+                "Q{http://www.w3.org/2005/xpath-functions}abs($n as xs:integer) as xs:integer",
                 None,
             ));
             let ctx = builder.build().unwrap();
@@ -293,13 +277,13 @@ mod tests {
         }
 
         #[test]
-        fn unknown_prefix_in_extension_signature_surfaces_as_build_error() {
-            // `xfi:` is NOT registered as a namespace on the builder,
-            // so the signature can't be parsed at build time.
+        fn malformed_signature_surfaces_as_build_error() {
+            // A truncated signature can't be parsed; `build()` reports
+            // it rather than panicking.
             let mut builder = StaticContextBuilder::default();
             builder.add_function(StaticFunctionDescription::new(
                 dummy_func,
-                "xfi:add($a as xs:integer) as xs:integer",
+                "Q{http://example.com/}broken($a as xs:integer",
                 None,
             ));
             assert!(builder.build().is_err());

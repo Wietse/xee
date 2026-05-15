@@ -169,6 +169,9 @@ impl<'a> DynamicContextBuilder<'a> {
     /// [`DynamicContext::user_data`], downcast to the original type.
     /// There is one slot per context — wrap multiple kinds of state in
     /// one struct. Calling this again replaces the slot.
+    // The `Send + Sync` bound buys no thread-safety today (`DynamicContext`
+    // holds `Rc`, so it is `!Send`), but keep it: relaxing a bound later is
+    // non-breaking, tightening it is not. Don't "simplify" it away.
     pub fn user_data<T: Any + Send + Sync>(&mut self, value: Arc<T>) -> &mut Self {
         self.user_data = Some(UserData::new(value));
         self

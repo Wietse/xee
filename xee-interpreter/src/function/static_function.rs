@@ -373,8 +373,12 @@ impl StaticFunctions {
 /// the built-in count, captured at build time. The dispatch helper on
 /// [`crate::context::StaticContext`] routes ids below the offset to the
 /// built-in table and ids at or above to this one.
+///
+/// Internal: a host registers functions through
+/// [`StaticFunctionDescription`] + `StaticContextBuilder::add_function`
+/// and never names this type.
 #[derive(Debug)]
-pub struct ExtensionFunctions {
+pub(crate) struct ExtensionFunctions {
     by_name: HashMap<(Name, u8), function::StaticFunctionId>,
     by_index: Vec<StaticFunction>,
     base_offset: usize,

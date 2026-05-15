@@ -11,8 +11,9 @@ use crate::{interpreter, sequence};
 use super::{DocumentsRef, StaticContext};
 
 /// Host-provided state attached to a [`DynamicContext`], stored
-/// type-erased. Wraps `Arc<dyn Any>` so the context's `Debug` derive
-/// still works (a bare `dyn Any` is not `Debug`).
+/// type-erased. Wraps `Arc<dyn Any + Send + Sync>` behind a newtype so
+/// the context's `Debug` derive still works (a bare `dyn Any` is not
+/// `Debug`).
 #[derive(Clone)]
 pub(crate) struct UserData(Arc<dyn Any + Send + Sync>);
 

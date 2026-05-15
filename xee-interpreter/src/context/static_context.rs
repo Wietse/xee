@@ -144,7 +144,7 @@ impl StaticContext {
     /// Get a static function by id.
     ///
     /// The id space unifies built-ins and extensions: ids below the
-    /// built-in count route to [`function::StaticFunctions`], ids at or
+    /// built-in count route to the built-in function table, ids at or
     /// above route to the extension registry.
     pub fn function_by_id(
         &self,

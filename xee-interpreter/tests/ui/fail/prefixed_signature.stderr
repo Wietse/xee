@@ -1,0 +1,7 @@
+error: unexpected end of input, invalid XPath signature `xfi:add($a as item()*) as item()*`: unknown namespace prefix `xfi` at byte position 0..7
+ --> tests/ui/fail/prefixed_signature.rs:9:1
+  |
+9 | #[xpath_fn("xfi:add($a as item()*) as item()*")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `xpath_fn` (in Nightly builds, run with -Z macro-backtrace for more info)

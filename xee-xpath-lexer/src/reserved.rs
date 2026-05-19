@@ -81,6 +81,12 @@ impl<'a> Token<'a> {
             Token::Treat => Some("treat"),
             Token::Union => Some("union"),
 
+            // XBRL Formula dialect literals. Like the keywords above, they are
+            // only literals in expression position; inside a QName or wildcard
+            // they are ordinary NCNames (`p:INF`, `INF:p`, `INF:*`).
+            Token::Inf => Some("INF"),
+            Token::Nan => Some("NaN"),
+
             // an NCName of course can also be a prefix or a local name
             Token::NCName(name) => Some(name),
             _ => None,

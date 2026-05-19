@@ -36,6 +36,9 @@ impl Token<'_> {
             | LocalNameWildcard(_)
             | DecimalLiteral(_)
             | DoubleLiteral(_)
+            // XBRL Formula dialect literals; non-delimiting like the keywords.
+            | Inf
+            | Nan
             | Ancestor
             | AncestorOrSelf
             | And

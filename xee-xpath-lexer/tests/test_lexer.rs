@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use ibig::ibig;
 use rust_decimal_macros::dec;
-use xee_xpath_lexer::{lexer, PrefixWildcard, PrefixedQName, Token};
+use xee_xpath_lexer::{lexer, LocalNameWildcard, PrefixWildcard, PrefixedQName, Token};
 
 #[test]
 fn test_tokenize() {
@@ -101,6 +101,108 @@ fn test_double_literal() {
 fn test_double_literal_starts_with_dot() {
     let mut lex = lexer(".456e-5");
     assert_eq!(lex.next(), Some((Token::DoubleLiteral(0.456e-5), (0..7))));
+}
+
+// XBRL Formula dialect: `INF` and `NaN` lex as their own tokens, which the
+// parser turns into xs:double literals.
+
+#[test]
+fn test_inf_literal() {
+    let mut lex = lexer("INF");
+    assert_eq!(lex.next(), Some((Token::Inf, (0..3))));
+    assert_eq!(lex.next(), None);
+}
+
+#[test]
+fn test_nan_literal() {
+    let mut lex = lexer("NaN");
+    assert_eq!(lex.next(), Some((Token::Nan, (0..3))));
+    assert_eq!(lex.next(), None);
+}
+
+#[test]
+fn test_signed_inf_literal_lexes_as_operator_and_literal() {
+    // `-INF` / `+INF` are not single tokens: the sign is the unary operator
+    // applied to the bare `INF` literal.
+    let mut lex = lexer("-INF");
+    assert_eq!(lex.next(), Some((Token::Minus, (0..1))));
+    assert_eq!(lex.next(), Some((Token::Inf, (1..4))));
+    assert_eq!(lex.next(), None);
+}
+
+#[test]
+fn test_inf_is_case_exact() {
+    // Only the exact spelling `INF` is a literal; other casings stay NCNames.
+    let mut lex = lexer("inf");
+    assert_eq!(lex.next(), Some((Token::NCName("inf"), (0..3))));
+}
+
+#[test]
+fn test_inf_prefix_stays_ncname() {
+    // `INF` only matches as a whole token; a longer name still lexes as NCName.
+    let mut lex = lexer("INFO");
+    assert_eq!(lex.next(), Some((Token::NCName("INFO"), (0..4))));
+}
+
+// Inside a QName or wildcard, `INF` / `NaN` are ordinary NCNames — the
+// explicit-whitespace step folds them in just like the language keywords.
+
+#[test]
+fn test_inf_as_qname_prefix() {
+    let mut lex = lexer("INF:foo");
+    assert_eq!(
+        lex.next(),
+        Some((
+            Token::PrefixedQName(PrefixedQName {
+                prefix: "INF",
+                local_name: "foo"
+            }),
+            (0..7)
+        ))
+    );
+    assert_eq!(lex.next(), None);
+}
+
+#[test]
+fn test_nan_as_qname_local_name() {
+    let mut lex = lexer("foo:NaN");
+    assert_eq!(
+        lex.next(),
+        Some((
+            Token::PrefixedQName(PrefixedQName {
+                prefix: "foo",
+                local_name: "NaN"
+            }),
+            (0..7)
+        ))
+    );
+    assert_eq!(lex.next(), None);
+}
+
+#[test]
+fn test_inf_as_local_name_wildcard() {
+    let mut lex = lexer("INF:*");
+    assert_eq!(
+        lex.next(),
+        Some((
+            Token::LocalNameWildcard(LocalNameWildcard { prefix: "INF" }),
+            (0..5)
+        ))
+    );
+    assert_eq!(lex.next(), None);
+}
+
+#[test]
+fn test_nan_as_prefix_wildcard() {
+    let mut lex = lexer("*:NaN");
+    assert_eq!(
+        lex.next(),
+        Some((
+            Token::PrefixWildcard(PrefixWildcard { local_name: "NaN" }),
+            (0..5)
+        ))
+    );
+    assert_eq!(lex.next(), None);
 }
 
 #[test]

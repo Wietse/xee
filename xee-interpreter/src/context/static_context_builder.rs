@@ -3,6 +3,7 @@ use std::sync::Arc;
 use ahash::HashMap;
 use iri_string::types::IriAbsoluteString;
 use xee_name::Namespaces;
+use xee_xpath_ast::XPathDialect;
 use xot::xmlname::OwnedName;
 
 use crate::context;
@@ -17,6 +18,7 @@ pub struct StaticContextBuilder<'a> {
     default_function_namespace: &'a str,
     static_base_uri: Option<IriAbsoluteString>,
     extension_descriptions: Vec<function::StaticFunctionDescription>,
+    dialect: XPathDialect,
 }
 
 impl<'a> StaticContextBuilder<'a> {
@@ -77,6 +79,16 @@ impl<'a> StaticContextBuilder<'a> {
     /// Set the static base URI
     pub fn static_base_uri(&mut self, static_base_uri: Option<IriAbsoluteString>) -> &mut Self {
         self.static_base_uri = static_base_uri;
+        self
+    }
+
+    /// Select the XPath grammar [`XPathDialect`] used to parse expressions.
+    ///
+    /// Defaults to [`XPathDialect::Standard`]. [`XPathDialect::XbrlFormula`]
+    /// additionally recognises a bare `INF` / `NaN` as an `xs:double`
+    /// literal; it does not otherwise change parsing.
+    pub fn dialect(&mut self, dialect: XPathDialect) -> &mut Self {
+        self.dialect = dialect;
         self
     }
 
@@ -143,6 +155,7 @@ impl<'a> StaticContextBuilder<'a> {
         let variable_names = self.variable_names.clone().into_iter().collect();
         let mut static_context =
             context::StaticContext::new(namespaces, variable_names, self.static_base_uri.clone());
+        static_context.set_dialect(self.dialect);
         if !self.extension_descriptions.is_empty() {
             let extensions = function::ExtensionFunctions::build(
                 &self.extension_descriptions,

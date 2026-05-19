@@ -21,17 +21,40 @@ use crate::ast;
 use crate::ast::unique_names;
 use crate::ast::Span;
 use crate::error::ParserError;
-use crate::Namespaces;
+use crate::{Namespaces, XPathDialect};
 
 use super::parser::parser_core::parser;
 use super::parser::types::{BoxedParser, State};
 
-fn create_token_iter(src: &str) -> impl Iterator<Item = (Token<'_>, SimpleSpan)> + '_ {
-    lexer(src).map(|(tok, span)| (tok, span.into()))
+/// Adjust a freshly-lexed token for the parsing dialect.
+///
+/// The lexer unconditionally emits `INF` / `NaN` as their own tokens so the
+/// XBRL Formula dialect can treat a bare one as an `xs:double` literal (see
+/// `parser/primary.rs`). In any other dialect they are ordinary names, so a
+/// bare `Inf` / `Nan` is folded back into an `NCName` and parsing matches
+/// standard XPath exactly. QName and wildcard forms (`p:INF`, `INF:*`) are
+/// reconstructed earlier, by the lexer's explicit-whitespace step, so only a
+/// genuinely bare token ever reaches here.
+fn apply_dialect(token: Token<'_>, dialect: XPathDialect) -> Token<'_> {
+    match dialect {
+        XPathDialect::XbrlFormula => token,
+        XPathDialect::Standard => match token {
+            Token::Inf => Token::NCName("INF"),
+            Token::Nan => Token::NCName("NaN"),
+            other => other,
+        },
+    }
 }
 
-fn tokens(src: &str) -> impl ValueInput<'_, Token = Token<'_>, Span = Span> {
-    Stream::from_iter(create_token_iter(src))
+fn create_token_iter(
+    src: &str,
+    dialect: XPathDialect,
+) -> impl Iterator<Item = (Token<'_>, SimpleSpan)> + '_ {
+    lexer(src).map(move |(tok, span)| (apply_dialect(tok, dialect), span.into()))
+}
+
+fn tokens(src: &str, dialect: XPathDialect) -> impl ValueInput<'_, Token = Token<'_>, Span = Span> {
+    Stream::from_iter(create_token_iter(src, dialect))
         .map((src.len()..src.len()).into(), |(tok, span)| (tok, span))
 }
 
@@ -57,7 +80,23 @@ impl ast::XPath {
         namespaces: &'a Namespaces,
         variable_names: &'a VariableNames,
     ) -> Result<Self, ParserError> {
-        let mut xpath = parse(parser().xpath, tokens(input), Cow::Borrowed(namespaces))?;
+        Self::parse_with_dialect(input, namespaces, variable_names, XPathDialect::Standard)
+    }
+
+    /// Parse an XPath expression in a specific grammar [`XPathDialect`].
+    ///
+    /// [`Self::parse`] is the same thing with [`XPathDialect::Standard`].
+    pub fn parse_with_dialect<'a>(
+        input: &'a str,
+        namespaces: &'a Namespaces,
+        variable_names: &'a VariableNames,
+        dialect: XPathDialect,
+    ) -> Result<Self, ParserError> {
+        let mut xpath = parse(
+            parser().xpath,
+            tokens(input, dialect),
+            Cow::Borrowed(namespaces),
+        )?;
         // rename all variables to unique names
         unique_names(&mut xpath, variable_names);
         Ok(xpath)
@@ -75,7 +114,7 @@ impl ast::XPath {
         });
         let r = parser()
             .xpath_right_brace
-            .parse_with_state(tokens(input), &mut state);
+            .parse_with_state(tokens(input, XPathDialect::Standard), &mut state);
         let (output, errors) = r.into_output_errors();
         if let Some(mut xpath) = output {
             // rename all variables to unique names
@@ -90,19 +129,31 @@ impl ast::XPath {
 impl ast::ExprSingle {
     pub fn parse(src: &str) -> Result<ast::ExprSingleS, ParserError> {
         let namespaces = Namespaces::default();
-        parse(parser().expr_single, tokens(src), Cow::Owned(namespaces))
+        parse(
+            parser().expr_single,
+            tokens(src, XPathDialect::Standard),
+            Cow::Owned(namespaces),
+        )
     }
 }
 
 impl ast::Signature {
     pub fn parse<'a>(input: &'a str, namespaces: &'a Namespaces) -> Result<Self, ParserError> {
-        parse(parser().signature, tokens(input), Cow::Borrowed(namespaces))
+        parse(
+            parser().signature,
+            tokens(input, XPathDialect::Standard),
+            Cow::Borrowed(namespaces),
+        )
     }
 }
 
 pub fn parse_kind_test(src: &str) -> Result<ast::KindTest, ParserError> {
     let namespaces = Namespaces::default();
-    parse(parser().kind_test, tokens(src), Cow::Owned(namespaces))
+    parse(
+        parser().kind_test,
+        tokens(src, XPathDialect::Standard),
+        Cow::Owned(namespaces),
+    )
 }
 
 pub fn parse_sequence_type<'a>(
@@ -111,7 +162,7 @@ pub fn parse_sequence_type<'a>(
 ) -> Result<ast::SequenceType, ParserError> {
     parse(
         parser().sequence_type,
-        tokens(input),
+        tokens(input, XPathDialect::Standard),
         Cow::Borrowed(namespaces),
     )
 }
@@ -120,11 +171,19 @@ pub fn parse_item_type<'a>(
     input: &'a str,
     namespaces: &'a Namespaces,
 ) -> Result<ast::ItemType, ParserError> {
-    parse(parser().item_type, tokens(input), Cow::Borrowed(namespaces))
+    parse(
+        parser().item_type,
+        tokens(input, XPathDialect::Standard),
+        Cow::Borrowed(namespaces),
+    )
 }
 
 pub fn parse_name<'a>(src: &'a str, namespaces: &'a Namespaces) -> Result<ast::NameS, ParserError> {
-    parse(parser().name, tokens(src), Cow::Borrowed(namespaces))
+    parse(
+        parser().name,
+        tokens(src, XPathDialect::Standard),
+        Cow::Borrowed(namespaces),
+    )
 }
 
 #[cfg(test)]
@@ -137,7 +196,11 @@ mod tests {
 
     fn parse_xpath_simple(src: &str) -> Result<ast::XPath, ParserError> {
         let namespaces = Namespaces::default();
-        parse(parser().xpath, tokens(src), Cow::Owned(namespaces))
+        parse(
+            parser().xpath,
+            tokens(src, XPathDialect::Standard),
+            Cow::Owned(namespaces),
+        )
     }
 
     fn parse_xpath_simple_element_ns(src: &str) -> Result<ast::XPath, ParserError> {
@@ -146,7 +209,11 @@ mod tests {
             "http://example.com".to_string(),
             "".to_string(),
         );
-        parse(parser().xpath, tokens(src), Cow::Owned(namespaces))
+        parse(
+            parser().xpath,
+            tokens(src, XPathDialect::Standard),
+            Cow::Owned(namespaces),
+        )
     }
 
     #[test]

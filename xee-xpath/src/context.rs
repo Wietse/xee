@@ -15,5 +15,6 @@
 
 pub use xee_interpreter::context::{
     DynamicContext, DynamicContextBuilder, StaticContext, StaticContextBuilder, Variables,
+    XPathDialect,
 };
 pub use xee_interpreter::string::Collation;

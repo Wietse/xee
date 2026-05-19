@@ -6,7 +6,7 @@ use xee_xpath_lexer::Token;
 
 use crate::ast::Span;
 use crate::{ast, WithSpan, FN_NAMESPACE};
-use crate::{pattern, Namespaces, ParserError, VariableNames};
+use crate::{pattern, Namespaces, ParserError, VariableNames, XPathDialect};
 
 use super::axis_node_test::parser_axis_node_test;
 use super::name::parser_name;
@@ -316,7 +316,11 @@ impl pattern::Pattern<ast::ExprS> {
         namespaces: &'a Namespaces,
         _variable_names: &'a VariableNames,
     ) -> Result<Self, ParserError> {
-        let pattern = parse(parser().pattern, tokens(input), Cow::Borrowed(namespaces))?;
+        let pattern = parse(
+            parser().pattern,
+            tokens(input, XPathDialect::Standard),
+            Cow::Borrowed(namespaces),
+        )?;
         // TODO: do we need to rename variables to unique names? probably
         Ok(pattern)
     }

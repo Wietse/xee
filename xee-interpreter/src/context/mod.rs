@@ -9,3 +9,4 @@ pub use dynamic_context::{DynamicContext, Variables};
 pub use dynamic_context_builder::{DocumentsRef, DynamicContextBuilder};
 pub use static_context::StaticContext;
 pub use static_context_builder::StaticContextBuilder;
+pub use xee_xpath_ast::XPathDialect;

@@ -275,6 +275,26 @@ pub enum Token<'a> {
     Switch,
     #[token("typeswitch")]
     Typeswitch,
+
+    // `INF` and `NaN` are xs:double numeric literals in the XBRL Formula
+    // expression dialect (and in its reference processor, Arelle); standard
+    // XPath has no such literals. Matching is case-exact, matching the
+    // xs:double lexical space.
+    //
+    // The lexer always emits these tokens; whether a *bare* one is a literal
+    // is decided downstream by the parsing dialect (see `XPathDialect` and
+    // `parser/mod.rs::apply_dialect`): outside the XBRL Formula dialect a bare
+    // `Inf` / `Nan` is folded back into an `NCName`. They are kept as distinct
+    // tokens (rather than folded straight into `DoubleLiteral`) so that, like
+    // the language keywords, they remain valid NCNames inside a QName or
+    // wildcard — `p:INF`, `INF:p`, `INF:*` — in every dialect; see
+    // `Token::ncname`. A signed `+INF` / `-INF` is the unary `+` / `-`
+    // operator over the bare literal, which keeps `1-INF` parsing as
+    // `1 - INF`.
+    #[token("INF")]
+    Inf,
+    #[token("NaN")]
+    Nan,
 }
 
 fn integer_literal<'a>(lex: &mut Lexer<'a, Token<'a>>) -> IBig {

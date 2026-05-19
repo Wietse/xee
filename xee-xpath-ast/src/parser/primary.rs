@@ -50,8 +50,15 @@ where
     .map(ast::Literal::Decimal)
     .boxed();
 
+    // `Inf` / `Nan` are the XBRL Formula dialect's xs:double literals. They
+    // only reach this parser as bare tokens in that dialect: outside it
+    // `parser/mod.rs::apply_dialect` rewrites a bare `Inf` / `Nan` to an
+    // `NCName`, and inside a QName or wildcard the lexer's explicit-whitespace
+    // step has already folded them into a name token.
     let double_literal = select! {
         Token::DoubleLiteral(d) => d,
+        Token::Inf => f64::INFINITY,
+        Token::Nan => f64::NAN,
     }
     .map(|d| ast::Literal::Double(OrderedFloat(d)))
     .boxed();

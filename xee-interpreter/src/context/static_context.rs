@@ -8,7 +8,7 @@ use iri_string::types::IriAbsoluteString;
 use iri_string::types::IriReferenceStr;
 use xee_name::{Namespaces, VariableNames};
 use xee_xpath_ast::ast;
-use xee_xpath_ast::XPathParserContext;
+use xee_xpath_ast::{XPathDialect, XPathParserContext};
 
 use crate::error;
 use crate::function;
@@ -72,6 +72,15 @@ impl StaticContext {
         extension_functions: Arc<function::ExtensionFunctions>,
     ) {
         self.extension_functions = Some(extension_functions);
+    }
+
+    pub(crate) fn set_dialect(&mut self, dialect: XPathDialect) {
+        self.parser_context.dialect = dialect;
+    }
+
+    /// The XPath grammar dialect this context parses expressions with.
+    pub fn dialect(&self) -> XPathDialect {
+        self.parser_context.dialect
     }
 
     pub(crate) fn builtin_function_count(&self) -> usize {

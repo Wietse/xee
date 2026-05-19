@@ -1,5 +1,7 @@
 use std::cmp::Ordering;
 
+use ordered_float::OrderedFloat;
+
 use crate::error;
 
 use super::cast_binary::cast_binary_compare;
@@ -25,8 +27,12 @@ impl AtomicCompare for OpLe {
         match (a, b) {
             (Decimal(a), Decimal(b)) => Ok(a <= b),
             (Integer(_, a), Integer(_, b)) => Ok(a <= b),
-            (Float(a), Float(b)) => Ok(a <= b),
-            (Double(a), Double(b)) => Ok(a <= b),
+            // Compare the raw floats, not the OrderedFloat wrappers: IEEE-754
+            // requires every ordering comparison involving NaN to be false,
+            // whereas OrderedFloat imposes a total order that sorts NaN above
+            // all other values.
+            (Float(OrderedFloat(a)), Float(OrderedFloat(b))) => Ok(a <= b),
+            (Double(OrderedFloat(a)), Double(OrderedFloat(b))) => Ok(a <= b),
             (Boolean(a), Boolean(b)) => Ok(a <= b),
             (String(_, a), String(_, b)) => Ok(string_compare(a.as_ref(), b.as_ref()).is_le()),
             (Date(a), Date(b)) => Ok(a

@@ -199,8 +199,7 @@ pub(crate) fn strip_injection_attrs(ast: &mut ItemFn) {
     for arg in &mut ast.sig.inputs {
         if let syn::FnArg::Typed(pat_type) = arg {
             pat_type.attrs.retain(|attr| {
-                !attr.path().is_ident("xpath_context")
-                    && !attr.path().is_ident("xpath_interpreter")
+                !attr.path().is_ident("xpath_context") && !attr.path().is_ident("xpath_interpreter")
             });
         }
     }
@@ -334,8 +333,7 @@ mod tests {
         // We trust the user; if the type doesn't actually match what
         // the wrapper passes in, rustc will catch the mismatch with a
         // clean error pointing at the user's code.
-        let options =
-            parse_str::<XPathFnOptions>(r#""fn:foo() as xs:string""#).unwrap();
+        let options = parse_str::<XPathFnOptions>(r#""fn:foo() as xs:string""#).unwrap();
         let ast = parse_str::<ItemFn>(
             r#"fn foo(#[xpath_context] dc: &my_app::DynamicContext) -> String { String::new() }"#,
         )
@@ -354,10 +352,8 @@ mod tests {
         // `let context = …;` for the regular param cannot shadow it.
         // The snapshot must show the call passing both locals
         // independently: `foo(__xpath_fn_context, context)`.
-        let options = parse_str::<XPathFnOptions>(
-            r#""fn:foo($context as xs:string) as xs:string""#,
-        )
-        .unwrap();
+        let options =
+            parse_str::<XPathFnOptions>(r#""fn:foo($context as xs:string) as xs:string""#).unwrap();
         let ast = parse_str::<ItemFn>(
             r#"fn foo(#[xpath_context] ctx: &DynamicContext, s: &str) -> String { format!("{}", s) }"#,
         )
@@ -376,10 +372,9 @@ mod tests {
             r#""fn:foo($arguments as xs:int, $x as xs:int) as xs:int""#,
         )
         .unwrap();
-        let ast = parse_str::<ItemFn>(
-            r#"fn foo(arguments: &i64, x: &i64) -> i64 { *arguments + *x }"#,
-        )
-        .unwrap();
+        let ast =
+            parse_str::<ItemFn>(r#"fn foo(arguments: &i64, x: &i64) -> i64 { *arguments + *x }"#)
+                .unwrap();
         assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap().to_string());
     }
 }

@@ -120,20 +120,20 @@ fn format_parser_error(error: &ParserError, signature: &str) -> String {
             if region.is_empty() {
                 format!("{prefix}: unexpected end of input")
             } else {
-                format!(
-                    "{prefix}: unexpected token `{region}` at byte position {start}..{end}"
-                )
+                format!("{prefix}: unexpected token `{region}` at byte position {start}..{end}")
             }
         }
-        ParserError::UnknownPrefix { prefix: ns_prefix, .. } => format!(
+        ParserError::UnknownPrefix {
+            prefix: ns_prefix, ..
+        } => format!(
             "{prefix}: unknown namespace prefix `{ns_prefix}` at byte position {start}..{end}"
         ),
-        ParserError::Reserved { name, .. } => format!(
-            "{prefix}: `{name}` is a reserved name (at byte position {start}..{end})"
-        ),
-        ParserError::ArityOverflow { .. } => format!(
-            "{prefix}: too many parameters declared (at byte position {start}..{end})"
-        ),
+        ParserError::Reserved { name, .. } => {
+            format!("{prefix}: `{name}` is a reserved name (at byte position {start}..{end})")
+        }
+        ParserError::ArityOverflow { .. } => {
+            format!("{prefix}: too many parameters declared (at byte position {start}..{end})")
+        }
         ParserError::UnknownType { name, .. } => format!(
             "{prefix}: unknown type `{}` at byte position {start}..{end}",
             name.full_name()

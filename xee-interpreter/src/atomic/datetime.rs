@@ -2,6 +2,22 @@ use chrono::{Offset, TimeZone};
 
 use crate::{atomic::Atomic, error};
 
+/// Reject timezone offsets outside the XPath/XSD value space.
+///
+/// The value space is `[-PT14H, +PT14H]` at integer-minute precision. An
+/// out-of-range or sub-minute offset cannot round-trip through the canonical
+/// lexical form `±hh:mm`, so we reject it at the construction boundary
+/// rather than producing a value that silently truncates on serialisation.
+fn validate_offset(offset: Option<chrono::FixedOffset>) -> error::Result<()> {
+    if let Some(offset) = offset {
+        let seconds = offset.local_minus_utc();
+        if seconds % 60 != 0 || seconds.abs() > 14 * 3600 {
+            return Err(error::Error::FODT0003);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) trait EqWithDefaultOffset: ToDateTimeStamp {
     fn eq_with_default_offset(&self, other: &Self, default_offset: chrono::FixedOffset) -> bool {
         let self_date_time_stamp = self.to_date_time_stamp(default_offset);
@@ -184,6 +200,21 @@ impl NaiveDateTimeWithOffset {
     ) -> Self {
         Self { date_time, offset }
     }
+
+    /// Construct an `xs:dateTime` value, validating the timezone offset.
+    ///
+    /// The XPath/XSD value space limits a timezone offset to
+    /// `[-PT14H, +PT14H]` at integer-minute precision. An offset outside that
+    /// range, or one with a sub-minute (seconds) component that would not
+    /// round-trip through the canonical lexical form, returns
+    /// [`error::Error::FODT0003`] ("invalid timezone value").
+    pub fn try_new(
+        date_time: chrono::NaiveDateTime,
+        offset: Option<chrono::FixedOffset>,
+    ) -> error::Result<Self> {
+        validate_offset(offset)?;
+        Ok(Self::new(date_time, offset))
+    }
 }
 
 /// A `NaiveTimeWithOffset` is a combination of a [`chrono::NaiveTime`] and
@@ -210,6 +241,17 @@ impl TryFrom<Atomic> for NaiveTimeWithOffset {
 impl NaiveTimeWithOffset {
     pub(crate) fn new(time: chrono::NaiveTime, offset: Option<chrono::FixedOffset>) -> Self {
         Self { time, offset }
+    }
+
+    /// Construct an `xs:time` value, validating the timezone offset.
+    ///
+    /// See [`NaiveDateTimeWithOffset::try_new`] for the offset constraint.
+    pub fn try_new(
+        time: chrono::NaiveTime,
+        offset: Option<chrono::FixedOffset>,
+    ) -> error::Result<Self> {
+        validate_offset(offset)?;
+        Ok(Self::new(time, offset))
     }
 }
 
@@ -257,6 +299,17 @@ impl TryFrom<Atomic> for NaiveDateWithOffset {
 impl NaiveDateWithOffset {
     pub(crate) fn new(date: chrono::NaiveDate, offset: Option<chrono::FixedOffset>) -> Self {
         Self { date, offset }
+    }
+
+    /// Construct an `xs:date` value, validating the timezone offset.
+    ///
+    /// See [`NaiveDateTimeWithOffset::try_new`] for the offset constraint.
+    pub fn try_new(
+        date: chrono::NaiveDate,
+        offset: Option<chrono::FixedOffset>,
+    ) -> error::Result<Self> {
+        validate_offset(offset)?;
+        Ok(Self::new(date, offset))
     }
 }
 
@@ -410,6 +463,65 @@ mod tests {
     use crate::atomic::{AtomicCompare, OpGt};
 
     use super::*;
+
+    // XPath/XSD: timezone offset must be in [-PT14H, +PT14H] at minute
+    // precision. `try_new` rejects anything else with FODT0003.
+
+    fn fixed(hours: i32, minutes: i32, seconds: i32) -> chrono::FixedOffset {
+        let total =
+            hours * 3600 + minutes.signum() * minutes.abs() * 60 + seconds.signum() * seconds.abs();
+        chrono::FixedOffset::east_opt(total).unwrap()
+    }
+
+    #[test]
+    fn try_new_accepts_no_offset() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        assert!(NaiveDateWithOffset::try_new(date, None).is_ok());
+    }
+
+    #[test]
+    fn try_new_accepts_offset_at_minute_precision() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        // +05:30 (IST) — minute precision, well within ±14:00.
+        assert!(NaiveDateWithOffset::try_new(date, Some(fixed(5, 30, 0))).is_ok());
+        // boundary: exactly +14:00.
+        assert!(NaiveDateWithOffset::try_new(date, Some(fixed(14, 0, 0))).is_ok());
+        // boundary: exactly -14:00.
+        assert!(NaiveDateWithOffset::try_new(date, Some(fixed(-14, 0, 0))).is_ok());
+    }
+
+    #[test]
+    fn try_new_rejects_out_of_range_offset() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        // +14:01 — one minute over.
+        let err = NaiveDateWithOffset::try_new(date, Some(fixed(14, 1, 0))).unwrap_err();
+        assert!(matches!(err, error::Error::FODT0003));
+        // +15:00 — well over.
+        let err = NaiveDateWithOffset::try_new(date, Some(fixed(15, 0, 0))).unwrap_err();
+        assert!(matches!(err, error::Error::FODT0003));
+    }
+
+    #[test]
+    fn try_new_rejects_sub_minute_offset() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        // +05:30:45 — has a seconds component that the canonical lexical form
+        // cannot represent, so the value would not round-trip.
+        let err = NaiveDateWithOffset::try_new(date, Some(fixed(5, 30, 45))).unwrap_err();
+        assert!(matches!(err, error::Error::FODT0003));
+    }
+
+    #[test]
+    fn try_new_works_for_time_and_date_time_too() {
+        let time = chrono::NaiveTime::from_hms_opt(12, 0, 0).unwrap();
+        let date_time = chrono::NaiveDate::from_ymd_opt(2026, 5, 20)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        assert!(NaiveTimeWithOffset::try_new(time, Some(fixed(5, 30, 0))).is_ok());
+        assert!(NaiveTimeWithOffset::try_new(time, Some(fixed(15, 0, 0))).is_err());
+        assert!(NaiveDateTimeWithOffset::try_new(date_time, Some(fixed(5, 30, 0))).is_ok());
+        assert!(NaiveDateTimeWithOffset::try_new(date_time, Some(fixed(15, 0, 0))).is_err());
+    }
 
     #[test]
     fn test_compare_dates() {

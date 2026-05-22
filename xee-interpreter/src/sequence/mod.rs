@@ -23,7 +23,7 @@ mod traits;
 mod variant;
 
 pub use core::Sequence;
-pub use item::{AtomizedItemIter, Item};
+pub use item::Item;
 pub use iter::AtomizedIter;
 pub(crate) use iter::{one, option};
 pub(crate) use opc::OptionParameterConverter;

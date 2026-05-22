@@ -1,5 +1,4 @@
-use crate::sequence::AtomizedItemIter;
-use crate::{atomic, error};
+use crate::error;
 
 use crate::sequence::item::Item;
 use crate::sequence::traits::{SequenceCompare, SequenceCore, SequenceExt, SequenceOrder};
@@ -85,12 +84,6 @@ where
     I: Iterator<Item = Item> + 'a,
     One: SequenceCore<'a, I>,
 {
-    fn atomized(
-        &'a self,
-        xot: &'a xot::Xot,
-    ) -> impl Iterator<Item = error::Result<atomic::Atomic>> + 'a {
-        AtomizedItemIter::new(&self.item, xot)
-    }
 }
 
 impl<'a, I> SequenceCompare<'a, I> for One

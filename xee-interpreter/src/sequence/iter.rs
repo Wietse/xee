@@ -258,3 +258,43 @@ pub(crate) fn option<'a, T>(mut iter: impl Iterator<Item = T> + 'a) -> error::Re
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sequence::core::Sequence;
+
+    // Consolidating the atomization iterators removed the `One::atomized`
+    // override, so a `One` sequence now atomizes through `AtomizedIter` like
+    // every other variant. These pin that rerouted path directly, rather than
+    // leaning only on the conformance suites.
+
+    #[test]
+    fn one_sequence_atomizes_node_to_untyped_string_value() {
+        let mut xot = Xot::new();
+        let root = xot.parse("<doc>hello</doc>").unwrap();
+        let doc = xot.document_element(root).unwrap();
+
+        let seq: Sequence = vec![Item::from(doc)].into();
+        assert!(matches!(seq, Sequence::One(_)), "expected a One sequence");
+
+        let atomized = seq
+            .atomized(&xot)
+            .collect::<error::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(atomized, vec![atomic::Atomic::Untyped("hello".into())]);
+    }
+
+    #[test]
+    fn one_sequence_atomizes_atomic_to_itself() {
+        let xot = Xot::new();
+        let seq: Sequence = vec![Item::from(atomic::Atomic::from(42i64))].into();
+        assert!(matches!(seq, Sequence::One(_)), "expected a One sequence");
+
+        let atomized = seq
+            .atomized(&xot)
+            .collect::<error::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(atomized, vec![atomic::Atomic::from(42i64)]);
+    }
+}

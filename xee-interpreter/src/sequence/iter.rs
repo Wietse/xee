@@ -122,7 +122,7 @@ impl<'a> AtomizedItemIter<'a> {
     ) -> Self {
         match item {
             Item::Atomic(a) => Self::Atomic(std::iter::once(a)),
-            Item::Node(n) => Self::Node(AtomizedNodeIter::new(n, xot)),
+            Item::Node(n) => Self::Node(AtomizedNodeIter::new(n, provider, xot)),
             Item::Function(function) => match function {
                 function::Function::Array(a) => {
                     Self::Array(AtomizedArrayIter::new(a, provider, xot))
@@ -139,7 +139,7 @@ impl Iterator for AtomizedItemIter<'_> {
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             Self::Atomic(iter) => iter.next().map(Ok),
-            Self::Node(iter) => iter.next().map(Ok),
+            Self::Node(iter) => iter.next(),
             Self::Array(iter) => iter.next(),
             Self::Erroring(iter) => iter.next(),
         }
@@ -155,39 +155,52 @@ impl Iterator for AtomizedItemIter<'_> {
     }
 }
 
-/// Atomizing a node
+/// Atomizing a node.
+///
+/// A node's typed value is a sequence of atomic values. With no
+/// typed-value provider installed — the schema-unaware default — that
+/// sequence is the single `xs:untypedAtomic` of the node's string
+/// value. A provider may instead supply the node's real typed value,
+/// or reject atomization of the node with an error.
 pub(crate) struct AtomizedNodeIter {
-    typed_value: Vec<atomic::Atomic>,
-    typed_value_index: usize,
+    iter: std::vec::IntoIter<error::Result<atomic::Atomic>>,
 }
 
 impl AtomizedNodeIter {
-    fn new(node: xot::Node, xot: &Xot) -> Self {
-        let s = xot.string_value(node);
-        let typed_value = vec![atomic::Atomic::Untyped(s.into())];
+    fn new(node: xot::Node, provider: Option<&dyn NodeTypedValueProvider>, xot: &Xot) -> Self {
+        let typed_value: Vec<error::Result<atomic::Atomic>> = match provider {
+            Some(provider) => match provider.typed_value(xot, node) {
+                // The host has an authoritative typed value for this node.
+                Ok(Some(values)) => values.into_iter().map(Ok).collect(),
+                // The provider has no opinion — schema-unaware fallback.
+                Ok(None) => vec![Ok(untyped_value(xot, node))],
+                // The provider rejects atomization of this node.
+                Err(e) => vec![Err(e)],
+            },
+            // No provider installed: schema-unaware default.
+            None => vec![Ok(untyped_value(xot, node))],
+        };
         Self {
-            typed_value,
-            typed_value_index: 0,
+            iter: typed_value.into_iter(),
         }
     }
 }
 
+/// The schema-unaware typed value of a node: a single `xs:untypedAtomic`
+/// holding the node's string value.
+fn untyped_value(xot: &Xot, node: xot::Node) -> atomic::Atomic {
+    atomic::Atomic::Untyped(xot.string_value(node).into())
+}
+
 impl Iterator for AtomizedNodeIter {
-    type Item = atomic::Atomic;
+    type Item = error::Result<atomic::Atomic>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.typed_value_index < self.typed_value.len() {
-            let item = self.typed_value[self.typed_value_index].clone();
-            self.typed_value_index += 1;
-            Some(item)
-        } else {
-            None
-        }
+        self.iter.next()
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.typed_value.len() - self.typed_value_index;
-        (remaining, Some(remaining))
+        self.iter.size_hint()
     }
 }
 
@@ -317,5 +330,133 @@ mod tests {
             .collect::<error::Result<Vec<_>>>()
             .unwrap();
         assert_eq!(atomized, vec![atomic::Atomic::from(42i64)]);
+    }
+
+    /// A `NodeTypedValueProvider` whose answer is fixed up front, for
+    /// exercising each branch of `AtomizedNodeIter`'s provider handling.
+    /// It cannot store an `Atomic` directly (`Atomic` holds `Rc`, so it is
+    /// not `Send + Sync`); it carries the integer and builds the atom.
+    enum Stub {
+        /// `Ok(Some(_))` — an authoritative typed value.
+        Typed(i64),
+        /// `Ok(Some(vec![]))` — an authoritatively empty typed value
+        /// (e.g. an `xsi:nil` element).
+        Empty,
+        /// `Ok(None)` — no opinion; the caller falls back to untyped.
+        NoOpinion,
+        /// `Err(_)` — the provider rejects atomization of the node.
+        Failing,
+    }
+
+    impl NodeTypedValueProvider for Stub {
+        fn typed_value(
+            &self,
+            _xot: &Xot,
+            _node: xot::Node,
+        ) -> error::Result<Option<Vec<atomic::Atomic>>> {
+            match self {
+                Stub::Typed(n) => Ok(Some(vec![atomic::Atomic::from(*n)])),
+                Stub::Empty => Ok(Some(vec![])),
+                Stub::NoOpinion => Ok(None),
+                Stub::Failing => Err(error::Error::XPTY0004),
+            }
+        }
+    }
+
+    fn node_sequence() -> (Xot, Sequence) {
+        let mut xot = Xot::new();
+        let root = xot.parse("<doc>untyped text</doc>").unwrap();
+        let doc = xot.document_element(root).unwrap();
+        let seq: Sequence = vec![Item::from(doc)].into();
+        (xot, seq)
+    }
+
+    #[test]
+    fn provider_supplies_the_node_typed_value() {
+        let (xot, seq) = node_sequence();
+        let stub: &dyn NodeTypedValueProvider = &Stub::Typed(42);
+        let atomized = seq
+            .atomized(Some(stub), &xot)
+            .collect::<error::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(atomized, vec![atomic::Atomic::from(42i64)]);
+    }
+
+    #[test]
+    fn provider_no_opinion_falls_back_to_untyped() {
+        let (xot, seq) = node_sequence();
+        let stub: &dyn NodeTypedValueProvider = &Stub::NoOpinion;
+        let atomized = seq
+            .atomized(Some(stub), &xot)
+            .collect::<error::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            atomized,
+            vec![atomic::Atomic::Untyped("untyped text".into())]
+        );
+    }
+
+    #[test]
+    fn provider_error_propagates() {
+        let (xot, seq) = node_sequence();
+        let stub: &dyn NodeTypedValueProvider = &Stub::Failing;
+        let result = seq
+            .atomized(Some(stub), &xot)
+            .collect::<error::Result<Vec<_>>>();
+        assert_eq!(result, Err(error::Error::XPTY0004));
+    }
+
+    #[test]
+    fn provider_empty_typed_value_yields_no_atomics() {
+        // Ok(Some(vec![])) is an authoritatively empty typed value (e.g.
+        // an xsi:nil element): the node contributes zero atomics. This
+        // breaks the old "a node always atomizes to exactly one atomic".
+        let (xot, seq) = node_sequence();
+        let stub: &dyn NodeTypedValueProvider = &Stub::Empty;
+        let atomized = seq
+            .atomized(Some(stub), &xot)
+            .collect::<error::Result<Vec<_>>>()
+            .unwrap();
+        assert!(atomized.is_empty());
+    }
+
+    /// A provider that rejects the node whose string value is `"boom"`
+    /// and supplies a typed value for every other node — for checking
+    /// that per-node results land in document order.
+    struct ByContent;
+
+    impl NodeTypedValueProvider for ByContent {
+        fn typed_value(
+            &self,
+            xot: &Xot,
+            node: xot::Node,
+        ) -> error::Result<Option<Vec<atomic::Atomic>>> {
+            if xot.string_value(node) == "boom" {
+                Err(error::Error::XPTY0004)
+            } else {
+                Ok(Some(vec![atomic::Atomic::from(true)]))
+            }
+        }
+    }
+
+    #[test]
+    fn provider_results_keep_node_order() {
+        let mut xot = Xot::new();
+        let root = xot
+            .parse("<doc><a>ok</a><b>boom</b><c>ok</c></doc>")
+            .unwrap();
+        let doc = xot.document_element(root).unwrap();
+        let a = xot.first_child(doc).unwrap();
+        let b = xot.next_sibling(a).unwrap();
+        let c = xot.next_sibling(b).unwrap();
+        let seq: Sequence = vec![Item::from(a), Item::from(b), Item::from(c)].into();
+
+        let stub: &dyn NodeTypedValueProvider = &ByContent;
+        let results: Vec<_> = seq.atomized(Some(stub), &xot).collect();
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0], Ok(atomic::Atomic::from(true)));
+        assert!(matches!(results[1], Err(error::Error::XPTY0004)));
+        assert_eq!(results[2], Ok(atomic::Atomic::from(true)));
     }
 }

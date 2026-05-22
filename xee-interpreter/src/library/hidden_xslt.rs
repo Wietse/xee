@@ -23,7 +23,7 @@ fn simple_content(
     // now atomize the sequence, putting in separators, except at the end
     let mut s = String::new();
     let mut first = true;
-    for atom in arg.atomized(interpreter.xot()) {
+    for atom in arg.atomized(interpreter.typed_value_provider(), interpreter.xot()) {
         let atom = atom?;
         if !first {
             s.push_str(separator);

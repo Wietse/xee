@@ -137,7 +137,9 @@ fn concat(
     let strings = arguments
         .iter()
         .map(|argument| {
-            let atomic = occurrence::option(argument.atomized(interpreter.xot()))?;
+            let atomic = occurrence::option(
+                argument.atomized(interpreter.typed_value_provider(), interpreter.xot()),
+            )?;
             if let Some(atomic) = atomic {
                 Ok(atomic.string_value())
             } else {

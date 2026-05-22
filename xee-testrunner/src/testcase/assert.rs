@@ -227,13 +227,13 @@ impl Assertable for AssertEq {
 
         match expected_sequence {
             Ok(expected_sequence) => {
-                let atom = xee_xpath::iter::one(sequence.atomized(documents.xot()));
+                let atom = xee_xpath::iter::one(sequence.atomized(None, documents.xot()));
                 let atom = match atom {
                     Ok(atom) => atom,
                     Err(error) => return TestOutcome::RuntimeError(error),
                 };
                 let expected_atom =
-                    xee_xpath::iter::one(expected_sequence.atomized(documents.xot()))
+                    xee_xpath::iter::one(expected_sequence.atomized(None, documents.xot()))
                         .expect("Should get single atom in sequence");
                 if expected_atom.simple_equal(&atom) {
                     TestOutcome::Passed
@@ -335,7 +335,7 @@ impl Assertable for AssertPermutation {
         // whether the result sequence has the same counts.
 
         let mut frequency = AHashMap::new();
-        for atom in sequence.atomized(documents.xot()) {
+        for atom in sequence.atomized(None, documents.xot()) {
             let atom = match atom {
                 Ok(atom) => atom,
                 Err(err) => return TestOutcome::RuntimeError(err),
@@ -350,7 +350,7 @@ impl Assertable for AssertPermutation {
             Err(error) => return TestOutcome::UnsupportedExpression(error.value()),
         };
 
-        for atom in result_sequence.atomized(documents.xot()) {
+        for atom in result_sequence.atomized(None, documents.xot()) {
             let atom = match atom {
                 Ok(atom) => atom,
                 Err(err) => return TestOutcome::RuntimeError(err),

@@ -1,5 +1,6 @@
 use xot::Xot;
 
+use crate::context::NodeTypedValueProvider;
 use crate::{atomic, error};
 
 use crate::sequence::traits::{SequenceCompare, SequenceCore, SequenceExt, SequenceOrder};
@@ -63,18 +64,27 @@ where
 {
     fn atomized(
         &'a self,
+        _provider: Option<&'a dyn NodeTypedValueProvider>,
         _xot: &'a xot::Xot,
     ) -> impl Iterator<Item = error::Result<atomic::Atomic>> + 'a {
         std::iter::empty()
     }
 
     /// Get just one atomized value from the sequence
-    fn atomized_one(&'a self, _xot: &'a Xot) -> error::Result<atomic::Atomic> {
+    fn atomized_one(
+        &'a self,
+        _provider: Option<&'a dyn NodeTypedValueProvider>,
+        _xot: &'a Xot,
+    ) -> error::Result<atomic::Atomic> {
         Err(error::Error::XPTY0004)
     }
 
     /// Get an optional atomized value from the sequence
-    fn atomized_option(&'a self, _xot: &'a Xot) -> error::Result<Option<atomic::Atomic>> {
+    fn atomized_option(
+        &'a self,
+        _provider: Option<&'a dyn NodeTypedValueProvider>,
+        _xot: &'a Xot,
+    ) -> error::Result<Option<atomic::Atomic>> {
         Ok(None)
     }
 }

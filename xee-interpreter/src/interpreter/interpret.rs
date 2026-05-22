@@ -461,8 +461,8 @@ impl<'a> Interpreter<'a> {
                 EncodedInstruction::Range => {
                     let b = self.state.pop()?;
                     let a = self.state.pop()?;
-                    let a = a.atomized_option(self.state.xot())?;
-                    let b = b.atomized_option(self.state.xot())?;
+                    let a = a.atomized_option(self.typed_value_provider(), self.state.xot())?;
+                    let b = b.atomized_option(self.typed_value_provider(), self.state.xot())?;
                     let (a, b) = match (a, b) {
                         (None, None) | (None, _) | (_, None) => {
                             self.state.push(sequence::Sequence::default());
@@ -926,7 +926,7 @@ impl<'a> Interpreter<'a> {
         get_key: impl Fn(&T, atomic::Atomic) -> error::Result<sequence::Sequence>,
     ) -> error::Result<Vec<sequence::Item>> {
         let keys = key_specifier
-            .atomized(self.state.xot())
+            .atomized(self.typed_value_provider(), self.state.xot())
             .collect::<error::Result<Vec<_>>>()?;
         let mut result = Vec::new();
         for key in keys {
@@ -984,6 +984,7 @@ impl<'a> Interpreter<'a> {
             op,
             self.runnable.default_collation()?.as_ref(),
             self.runnable.implicit_timezone(),
+            self.typed_value_provider(),
             self.state.xot(),
         )?;
         self.state.push(v);
@@ -1021,8 +1022,8 @@ impl<'a> Interpreter<'a> {
             self.state.push(sequence::Sequence::default());
             return Ok(());
         }
-        let a = a.atomized_one(self.state.xot())?;
-        let b = b.atomized_one(self.state.xot())?;
+        let a = a.atomized_one(self.typed_value_provider(), self.state.xot())?;
+        let b = b.atomized_one(self.typed_value_provider(), self.state.xot())?;
         let result = op(a, b, self.runnable.implicit_timezone())?;
         self.state.push(result);
         Ok(())
@@ -1037,7 +1038,7 @@ impl<'a> Interpreter<'a> {
             self.state.push(sequence::Sequence::default());
             return Ok(());
         }
-        let a = a.atomized_one(self.state.xot())?;
+        let a = a.atomized_one(self.typed_value_provider(), self.state.xot())?;
         let value = op(a)?;
         self.state.push(value);
         Ok(())
@@ -1045,7 +1046,7 @@ impl<'a> Interpreter<'a> {
 
     fn pop_is_numeric(&mut self) -> error::Result<bool> {
         let value = self.state.pop()?;
-        let a = value.atomized_option(self.state.xot())?;
+        let a = value.atomized_option(self.typed_value_provider(), self.state.xot())?;
         if let Some(a) = a {
             Ok(a.is_numeric())
         } else {
@@ -1055,12 +1056,12 @@ impl<'a> Interpreter<'a> {
 
     fn pop_atomic(&mut self) -> error::Result<atomic::Atomic> {
         let value = self.state.pop()?;
-        value.atomized_one(self.state.xot())
+        value.atomized_one(self.typed_value_provider(), self.state.xot())
     }
 
     fn pop_atomic_option(&mut self) -> error::Result<Option<atomic::Atomic>> {
         let value = self.state.pop()?;
-        value.atomized_option(self.state.xot())
+        value.atomized_option(self.typed_value_provider(), self.state.xot())
     }
 
     fn pop_xot_name(&mut self) -> error::Result<xot::NameId> {
@@ -1108,6 +1109,15 @@ impl<'a> Interpreter<'a> {
     #[doc(hidden)]
     pub fn xot(&self) -> &Xot {
         self.state.xot()
+    }
+
+    /// Macro-support entry point: `#[xpath_fn]`-generated wrappers call
+    /// this to obtain the host's typed-value provider, if one is
+    /// installed, when atomizing arguments. Not part of the public API
+    /// surface; callers outside the macro shouldn't name it directly.
+    #[doc(hidden)]
+    pub fn typed_value_provider(&self) -> Option<&dyn crate::context::NodeTypedValueProvider> {
+        self.runnable.dynamic_context().typed_value_provider()
     }
 
     pub(crate) fn xot_mut(&mut self) -> &mut Xot {

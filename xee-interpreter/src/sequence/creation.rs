@@ -138,7 +138,8 @@ impl Sequence {
         self.sorted_by_key(context, collation, |item| {
             // the equivalent of fn:data()
             let seq: Self = item.into();
-            seq.atomized(xot).collect::<error::Result<Sequence>>()
+            seq.atomized(context.typed_value_provider(), xot)
+                .collect::<error::Result<Sequence>>()
         })
     }
 

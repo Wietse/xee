@@ -1,5 +1,6 @@
 use xot::Xot;
 
+use crate::context::NodeTypedValueProvider;
 use crate::{atomic, error, function};
 
 use super::item::Item;
@@ -42,6 +43,7 @@ pub struct AtomizedIter<'a, I>
 where
     I: Iterator<Item = Item> + 'a,
 {
+    provider: Option<&'a dyn NodeTypedValueProvider>,
     xot: &'a Xot,
     iter: I,
     item_iter: Option<AtomizedItemIter<'a>>,
@@ -51,8 +53,13 @@ impl<'a, I> AtomizedIter<'a, I>
 where
     I: Iterator<Item = Item>,
 {
-    pub(crate) fn new(xot: &'a Xot, iter: I) -> AtomizedIter<'a, I> {
+    pub(crate) fn new(
+        provider: Option<&'a dyn NodeTypedValueProvider>,
+        xot: &'a Xot,
+        iter: I,
+    ) -> AtomizedIter<'a, I> {
         AtomizedIter {
+            provider,
             xot,
             iter,
             item_iter: None,
@@ -80,7 +87,7 @@ where
             // if not, move on to the next item
             let item = self.iter.next();
             if let Some(item) = item {
-                self.item_iter = Some(AtomizedItemIter::new(item, self.xot));
+                self.item_iter = Some(AtomizedItemIter::new(item, self.provider, self.xot));
                 continue;
             } else {
                 // no more items, we're done
@@ -99,7 +106,7 @@ where
 }
 
 /// Atomizing an individual item in a sequence.
-pub enum AtomizedItemIter<'a> {
+pub(crate) enum AtomizedItemIter<'a> {
     Atomic(std::iter::Once<atomic::Atomic>),
     Node(AtomizedNodeIter),
     Array(AtomizedArrayIter<'a>),
@@ -108,12 +115,18 @@ pub enum AtomizedItemIter<'a> {
 }
 
 impl<'a> AtomizedItemIter<'a> {
-    pub(crate) fn new(item: Item, xot: &'a Xot) -> Self {
+    pub(crate) fn new(
+        item: Item,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
+        xot: &'a Xot,
+    ) -> Self {
         match item {
             Item::Atomic(a) => Self::Atomic(std::iter::once(a)),
             Item::Node(n) => Self::Node(AtomizedNodeIter::new(n, xot)),
             Item::Function(function) => match function {
-                function::Function::Array(a) => Self::Array(AtomizedArrayIter::new(a, xot)),
+                function::Function::Array(a) => {
+                    Self::Array(AtomizedArrayIter::new(a, provider, xot))
+                }
                 _ => Self::Erroring(std::iter::once(Err(error::Error::FOTY0013))),
             },
         }
@@ -143,7 +156,7 @@ impl Iterator for AtomizedItemIter<'_> {
 }
 
 /// Atomizing a node
-pub struct AtomizedNodeIter {
+pub(crate) struct AtomizedNodeIter {
     typed_value: Vec<atomic::Atomic>,
     typed_value_index: usize,
 }
@@ -179,7 +192,8 @@ impl Iterator for AtomizedNodeIter {
 }
 
 /// Atomizing a XPath array
-pub struct AtomizedArrayIter<'a> {
+pub(crate) struct AtomizedArrayIter<'a> {
+    provider: Option<&'a dyn NodeTypedValueProvider>,
     xot: &'a Xot,
     array: function::Array,
     array_index: usize,
@@ -187,8 +201,13 @@ pub struct AtomizedArrayIter<'a> {
 }
 
 impl<'a> AtomizedArrayIter<'a> {
-    fn new(array: function::Array, xot: &'a Xot) -> Self {
+    fn new(
+        array: function::Array,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
+        xot: &'a Xot,
+    ) -> Self {
         Self {
+            provider,
             xot,
             array,
             array_index: 0,
@@ -222,7 +241,9 @@ impl Iterator for AtomizedArrayIter<'_> {
             // an array reference cannot live long enough, but an owned
             // array also cannot live long enough. So we collect things
             // into a vector...
-            let v = sequence.atomized(self.xot).collect::<Vec<_>>();
+            let v = sequence
+                .atomized(self.provider, self.xot)
+                .collect::<Vec<_>>();
             self.iter = Some(v.into_iter());
         }
     }
@@ -279,7 +300,7 @@ mod tests {
         assert!(matches!(seq, Sequence::One(_)), "expected a One sequence");
 
         let atomized = seq
-            .atomized(&xot)
+            .atomized(None, &xot)
             .collect::<error::Result<Vec<_>>>()
             .unwrap();
         assert_eq!(atomized, vec![atomic::Atomic::Untyped("hello".into())]);
@@ -292,7 +313,7 @@ mod tests {
         assert!(matches!(seq, Sequence::One(_)), "expected a One sequence");
 
         let atomized = seq
-            .atomized(&xot)
+            .atomized(None, &xot)
             .collect::<error::Result<Vec<_>>>()
             .unwrap();
         assert_eq!(atomized, vec![atomic::Atomic::from(42i64)]);

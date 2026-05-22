@@ -223,12 +223,12 @@ impl Sequence {
     ) -> error::Result<Self> {
         match occurrence_item.occurrence {
             ast::Occurrence::One => {
-                let one = one(self.atomized(xot))?;
+                let one = one(self.atomized(None, xot))?;
                 let atom = one?.atomic_type_matching(xs, cast_or_promote_atomic)?;
                 Ok(atom.into())
             }
             ast::Occurrence::Option => {
-                let option = option(self.atomized(xot))?;
+                let option = option(self.atomized(None, xot))?;
                 if let Some(atom) = option {
                     let atom = atom?.atomic_type_matching(xs, cast_or_promote_atomic)?;
                     Ok(atom.into())
@@ -238,7 +238,7 @@ impl Sequence {
             }
             ast::Occurrence::Many => {
                 let mut atoms = Vec::with_capacity(self.len());
-                for atom in self.atomized(xot) {
+                for atom in self.atomized(None, xot) {
                     atoms.push(atom?.atomic_type_matching(xs, cast_or_promote_atomic)?);
                 }
                 Ok(atoms.into())
@@ -248,7 +248,7 @@ impl Sequence {
                     return Err(error::Error::XPTY0004);
                 }
                 let mut atoms = Vec::with_capacity(self.len());
-                for atom in self.atomized(xot) {
+                for atom in self.atomized(None, xot) {
                     atoms.push(atom?.atomic_type_matching(xs, cast_or_promote_atomic)?);
                 }
                 Ok(atoms.into())

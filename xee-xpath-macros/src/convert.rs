@@ -147,7 +147,10 @@ fn convert_atomic_or_union_type(
     interp_local: &Ident,
 ) -> syn::Result<(TokenStream, bool)> {
     if xs == Xs::AnyAtomicType || xs == Xs::Numeric {
-        return Ok((quote!(#arg.atomized(#interp_local.xot())), false));
+        return Ok((
+            quote!(#arg.atomized(#interp_local.typed_value_provider(), #interp_local.xot())),
+            false,
+        ));
     }
 
     let Some(rust_info) = xs.rust_info() else {
@@ -165,7 +168,11 @@ fn convert_atomic_or_union_type(
 
     let borrow = rust_info.is_reference();
     Ok((
-        quote!(#arg.unboxed_atomized(#interp_local.xot(), |atomic| #convert)),
+        quote!(#arg.unboxed_atomized(
+            #interp_local.typed_value_provider(),
+            #interp_local.xot(),
+            |atomic| #convert
+        )),
         borrow,
     ))
 }

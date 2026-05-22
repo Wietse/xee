@@ -35,7 +35,7 @@ fn string(interpreter: &Interpreter, arg: Option<sequence::Item>) -> error::Resu
 #[xpath_fn("fn:data($arg as item()*) as xs:anyAtomicType*", context_first)]
 fn data(interpreter: &Interpreter, arg: &sequence::Sequence) -> error::Result<Vec<sequence::Item>> {
     let data = arg
-        .atomized(interpreter.xot())
+        .atomized(interpreter.typed_value_provider(), interpreter.xot())
         .map(|atom| atom.map(|a| a.into()))
         .collect::<error::Result<Vec<sequence::Item>>>()?;
     Ok(data)

@@ -9,7 +9,8 @@ use xot::Xot;
 
 use crate::{
     atomic::{self, AtomicCompare},
-    context, error, function,
+    context::{self, NodeTypedValueProvider},
+    error, function,
     string::Collation,
     xml,
 };
@@ -146,37 +147,46 @@ impl Sequence {
     /// Iterator for the atomized values in the sequence
     pub fn atomized<'a>(
         &'a self,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
         xot: &'a xot::Xot,
     ) -> Box<dyn Iterator<Item = error::Result<atomic::Atomic>> + 'a> {
         match self {
-            Sequence::Empty(inner) => Box::new(inner.atomized(xot)),
-            Sequence::One(inner) => Box::new(inner.atomized(xot)),
-            Sequence::Many(inner) => Box::new(inner.atomized(xot)),
-            Sequence::Range(inner) => Box::new(inner.atomized(xot)),
+            Sequence::Empty(inner) => Box::new(inner.atomized(provider, xot)),
+            Sequence::One(inner) => Box::new(inner.atomized(provider, xot)),
+            Sequence::Many(inner) => Box::new(inner.atomized(provider, xot)),
+            Sequence::Range(inner) => Box::new(inner.atomized(provider, xot)),
         }
     }
 
     /// Get just one atomized value from the sequence
     ///
     /// If there are less or more, you get a type error.
-    pub fn atomized_one(&self, xot: &xot::Xot) -> error::Result<atomic::Atomic> {
+    pub fn atomized_one(
+        &self,
+        provider: Option<&dyn NodeTypedValueProvider>,
+        xot: &xot::Xot,
+    ) -> error::Result<atomic::Atomic> {
         match self {
-            Sequence::Empty(inner) => inner.atomized_one(xot),
-            Sequence::One(inner) => inner.atomized_one(xot),
-            Sequence::Many(inner) => inner.atomized_one(xot),
-            Sequence::Range(inner) => inner.atomized_one(xot),
+            Sequence::Empty(inner) => inner.atomized_one(provider, xot),
+            Sequence::One(inner) => inner.atomized_one(provider, xot),
+            Sequence::Many(inner) => inner.atomized_one(provider, xot),
+            Sequence::Range(inner) => inner.atomized_one(provider, xot),
         }
     }
 
     /// Get an optional atomized value from the sequence
     ///
     /// If there are more than one, you get a type error.
-    pub fn atomized_option(&self, xot: &xot::Xot) -> error::Result<Option<atomic::Atomic>> {
+    pub fn atomized_option(
+        &self,
+        provider: Option<&dyn NodeTypedValueProvider>,
+        xot: &xot::Xot,
+    ) -> error::Result<Option<atomic::Atomic>> {
         match self {
-            Sequence::Empty(inner) => inner.atomized_option(xot),
-            Sequence::One(inner) => inner.atomized_option(xot),
-            Sequence::Many(inner) => inner.atomized_option(xot),
-            Sequence::Range(inner) => inner.atomized_option(xot),
+            Sequence::Empty(inner) => inner.atomized_option(provider, xot),
+            Sequence::One(inner) => inner.atomized_option(provider, xot),
+            Sequence::Many(inner) => inner.atomized_option(provider, xot),
+            Sequence::Range(inner) => inner.atomized_option(provider, xot),
         }
     }
 
@@ -188,14 +198,15 @@ impl Sequence {
     #[doc(hidden)]
     pub fn unboxed_atomized<'a, T: 'a>(
         &'a self,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
         xot: &'a xot::Xot,
         extract: impl Fn(atomic::Atomic) -> error::Result<T> + 'a,
     ) -> Box<dyn Iterator<Item = error::Result<T>> + 'a> {
         match self {
-            Sequence::Empty(inner) => Box::new(inner.unboxed_atomized(xot, extract)),
-            Sequence::One(inner) => Box::new(inner.unboxed_atomized(xot, extract)),
-            Sequence::Many(inner) => Box::new(inner.unboxed_atomized(xot, extract)),
-            Sequence::Range(inner) => Box::new(inner.unboxed_atomized(xot, extract)),
+            Sequence::Empty(inner) => Box::new(inner.unboxed_atomized(provider, xot, extract)),
+            Sequence::One(inner) => Box::new(inner.unboxed_atomized(provider, xot, extract)),
+            Sequence::Many(inner) => Box::new(inner.unboxed_atomized(provider, xot, extract)),
+            Sequence::Range(inner) => Box::new(inner.unboxed_atomized(provider, xot, extract)),
         }
     }
 
@@ -292,6 +303,7 @@ impl Sequence {
         op: O,
         collation: &Collation,
         timezone: chrono::FixedOffset,
+        provider: Option<&dyn NodeTypedValueProvider>,
         xot: &Xot,
     ) -> error::Result<bool>
     where
@@ -299,52 +311,52 @@ impl Sequence {
     {
         match (self, other) {
             (Sequence::Empty(a), Sequence::Empty(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Empty(a), Sequence::One(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Empty(a), Sequence::Many(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Empty(a), Sequence::Range(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::One(a), Sequence::Empty(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::One(a), Sequence::One(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::One(a), Sequence::Many(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::One(a), Sequence::Range(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Many(a), Sequence::Empty(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Many(a), Sequence::One(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Many(a), Sequence::Many(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Many(a), Sequence::Range(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Range(a), Sequence::Empty(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Range(a), Sequence::One(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Range(a), Sequence::Many(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
             (Sequence::Range(a), Sequence::Range(b)) => {
-                a.value_compare(b, op, collation, timezone, xot)
+                a.value_compare(b, op, collation, timezone, provider, xot)
             }
         }
     }

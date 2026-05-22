@@ -2,7 +2,8 @@ use xot::Xot;
 
 use crate::{
     atomic::{self, AtomicCompare},
-    context, error, function,
+    context::{self, NodeTypedValueProvider},
+    error, function,
     string::Collation,
     xml,
 };
@@ -61,28 +62,38 @@ where
     /// Access an iterator for the atomized values in the sequence
     fn atomized(
         &'a self,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
         xot: &'a Xot,
     ) -> impl Iterator<Item = error::Result<atomic::Atomic>> + 'a {
-        AtomizedIter::new(xot, self.iter())
+        AtomizedIter::new(provider, xot, self.iter())
     }
 
     /// Get just one atomized value from the sequence
-    fn atomized_one(&'a self, xot: &'a Xot) -> error::Result<atomic::Atomic> {
-        iter::one(self.atomized(xot))?
+    fn atomized_one(
+        &'a self,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
+        xot: &'a Xot,
+    ) -> error::Result<atomic::Atomic> {
+        iter::one(self.atomized(provider, xot))?
     }
 
     /// Get an optional atomized value from the sequence
-    fn atomized_option(&'a self, xot: &'a Xot) -> error::Result<Option<atomic::Atomic>> {
-        iter::option(self.atomized(xot))?.transpose()
+    fn atomized_option(
+        &'a self,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
+        xot: &'a Xot,
+    ) -> error::Result<Option<atomic::Atomic>> {
+        iter::option(self.atomized(provider, xot))?.transpose()
     }
 
     /// Is used internally by the library macro.
     fn unboxed_atomized<T: 'a>(
         &'a self,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
         xot: &'a Xot,
         extract: impl Fn(atomic::Atomic) -> error::Result<T> + 'a,
     ) -> impl Iterator<Item = error::Result<T>> + 'a {
-        self.atomized(xot).map(move |a| extract(a?))
+        self.atomized(provider, xot).map(move |a| extract(a?))
     }
 
     /// Access an iterator over the XPath maps in the sequence
@@ -139,15 +150,16 @@ where
         &'a self,
         other: &'a impl SequenceExt<'a, J>,
         op: O,
-        context: &context::DynamicContext,
+        context: &'a context::DynamicContext,
         xot: &'a Xot,
     ) -> error::Result<bool>
     where
         O: AtomicCompare,
         J: Iterator<Item = Item> + 'a,
     {
-        let a_atomized = self.atomized(xot);
-        let b_atomized = other.atomized(xot);
+        let provider = context.typed_value_provider();
+        let a_atomized = self.atomized(provider, xot);
+        let b_atomized = other.atomized(provider, xot);
         // optimization:
         // if a is actually smaller than b, then we want to pass a as the second argument,
         // because a gets collected by the general comparison logic, and we'd rather
@@ -169,14 +181,15 @@ where
         _op: O,
         collation: &Collation,
         timezone: chrono::FixedOffset,
+        provider: Option<&'a dyn NodeTypedValueProvider>,
         xot: &'a Xot,
     ) -> error::Result<bool>
     where
         O: AtomicCompare,
         J: Iterator<Item = Item> + 'a,
     {
-        let a = self.atomized_one(xot)?;
-        let b = other.atomized_one(xot)?;
+        let a = self.atomized_one(provider, xot)?;
+        let b = other.atomized_one(provider, xot)?;
         O::atomic_compare(a, b, |a: &str, b: &str| collation.compare(a, b), timezone)
     }
 }

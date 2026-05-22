@@ -10,7 +10,7 @@ use xee_xpath_type::TypeInfo;
 use xot::Xot;
 
 use crate::atomic;
-use crate::context;
+use crate::context::{self, NodeTypedValueProvider};
 use crate::error;
 use crate::function;
 use crate::xml;
@@ -52,6 +52,10 @@ impl Sequence {
             sequence_type,
             &|atomic, _| Ok(atomic),
             &|function_test, item| item.function_type_matching(function_test, &get_signature),
+            // `instance of` / assert-type must not depend on host typing:
+            // a node is never an instance of an atomic type regardless of
+            // the provider, so atomization here stays schema-unaware.
+            None,
             xot,
         )
     }
@@ -61,6 +65,7 @@ impl Sequence {
         self,
         sequence_type: &ast::SequenceType,
         context: &'a context::StaticContext,
+        provider: Option<&dyn NodeTypedValueProvider>,
         xot: &Xot,
         get_signature: &impl Fn(&function::Function) -> &'a function::Signature,
     ) -> error::Result<Self> {
@@ -68,6 +73,7 @@ impl Sequence {
             sequence_type,
             &|atomic, xs| Self::cast_or_promote_atomic(atomic, xs, context),
             &|function_test, item| item.function_arity_matching(function_test, &get_signature),
+            provider,
             xot,
         )
     }
@@ -98,6 +104,7 @@ impl Sequence {
         t: &ast::SequenceType,
         cast_or_promote_atomic: &impl Fn(atomic::Atomic, Xs) -> error::Result<atomic::Atomic>,
         check_function: &impl Fn(&ast::FunctionTest, &Item) -> error::Result<()>,
+        provider: Option<&dyn NodeTypedValueProvider>,
         xot: &Xot,
     ) -> error::Result<Self> {
         match t {
@@ -112,6 +119,7 @@ impl Sequence {
                 occurrence_item,
                 cast_or_promote_atomic,
                 check_function,
+                provider,
                 xot,
             ),
         }
@@ -122,6 +130,7 @@ impl Sequence {
         occurrence_item: &ast::Item,
         cast_or_promote_atomic: &impl Fn(atomic::Atomic, Xs) -> error::Result<atomic::Atomic>,
         check_function: &impl Fn(&ast::FunctionTest, &Item) -> error::Result<()>,
+        provider: Option<&dyn NodeTypedValueProvider>,
         xot: &Xot,
     ) -> error::Result<Self> {
         match &occurrence_item.item_type {
@@ -129,12 +138,14 @@ impl Sequence {
                 occurrence_item,
                 cast_or_promote_atomic,
                 *xs,
+                provider,
                 xot,
             ),
             _ => self.non_atomic_occurrence_item_matching(
                 occurrence_item,
                 cast_or_promote_atomic,
                 check_function,
+                provider,
                 xot,
             ),
         }
@@ -148,6 +159,7 @@ impl Sequence {
         occurrence_item: &ast::Item,
         cast_or_promote_atomic: &impl Fn(atomic::Atomic, Xs) -> error::Result<atomic::Atomic>,
         check_function: &impl Fn(&ast::FunctionTest, &Item) -> error::Result<()>,
+        provider: Option<&dyn NodeTypedValueProvider>,
         xot: &Xot,
     ) -> error::Result<Self> {
         match occurrence_item.occurrence {
@@ -157,6 +169,7 @@ impl Sequence {
                     &occurrence_item.item_type,
                     cast_or_promote_atomic,
                     check_function,
+                    provider,
                     xot,
                 )?;
             }
@@ -167,6 +180,7 @@ impl Sequence {
                         &occurrence_item.item_type,
                         cast_or_promote_atomic,
                         check_function,
+                        provider,
                         xot,
                     )?;
                 }
@@ -183,6 +197,7 @@ impl Sequence {
                                 &occurrence_item.item_type,
                                 cast_or_promote_atomic,
                                 check_function,
+                                provider,
                                 xot,
                             )?;
                         }
@@ -204,6 +219,7 @@ impl Sequence {
                                 &occurrence_item.item_type,
                                 cast_or_promote_atomic,
                                 check_function,
+                                provider,
                                 xot,
                             )?;
                         }
@@ -219,16 +235,17 @@ impl Sequence {
         occurrence_item: &ast::Item,
         cast_or_promote_atomic: &impl Fn(atomic::Atomic, Xs) -> error::Result<atomic::Atomic>,
         xs: Xs,
+        provider: Option<&dyn NodeTypedValueProvider>,
         xot: &Xot,
     ) -> error::Result<Self> {
         match occurrence_item.occurrence {
             ast::Occurrence::One => {
-                let one = one(self.atomized(None, xot))?;
+                let one = one(self.atomized(provider, xot))?;
                 let atom = one?.atomic_type_matching(xs, cast_or_promote_atomic)?;
                 Ok(atom.into())
             }
             ast::Occurrence::Option => {
-                let option = option(self.atomized(None, xot))?;
+                let option = option(self.atomized(provider, xot))?;
                 if let Some(atom) = option {
                     let atom = atom?.atomic_type_matching(xs, cast_or_promote_atomic)?;
                     Ok(atom.into())
@@ -238,7 +255,7 @@ impl Sequence {
             }
             ast::Occurrence::Many => {
                 let mut atoms = Vec::with_capacity(self.len());
-                for atom in self.atomized(None, xot) {
+                for atom in self.atomized(provider, xot) {
                     atoms.push(atom?.atomic_type_matching(xs, cast_or_promote_atomic)?);
                 }
                 Ok(atoms.into())
@@ -248,7 +265,7 @@ impl Sequence {
                     return Err(error::Error::XPTY0004);
                 }
                 let mut atoms = Vec::with_capacity(self.len());
-                for atom in self.atomized(None, xot) {
+                for atom in self.atomized(provider, xot) {
                     atoms.push(atom?.atomic_type_matching(xs, cast_or_promote_atomic)?);
                 }
                 Ok(atoms.into())
@@ -263,6 +280,7 @@ impl Item {
         item_type: &ast::ItemType,
         cast_or_promote_atomic: &impl Fn(atomic::Atomic, Xs) -> error::Result<atomic::Atomic>,
         check_function: &impl Fn(&ast::FunctionTest, &Item) -> error::Result<()>,
+        provider: Option<&dyn NodeTypedValueProvider>,
         xot: &Xot,
     ) -> error::Result<()> {
         match item_type {
@@ -293,6 +311,7 @@ impl Item {
                             &typed_map_test.value_type,
                             cast_or_promote_atomic,
                             check_function,
+                            provider,
                             xot,
                         )?;
                     }
@@ -311,6 +330,7 @@ impl Item {
                             &typed_array_test.item_type,
                             cast_or_promote_atomic,
                             check_function,
+                            provider,
                             xot,
                         )?;
                     }
@@ -698,6 +718,7 @@ mod tests {
         let right_result = right_sequence.sequence_type_matching_function_conversion(
             &sequence_type,
             &static_context,
+            None,
             &xot,
             &|_| unreachable!(),
         );
@@ -729,6 +750,7 @@ mod tests {
         let right_result = right_sequence.sequence_type_matching_function_conversion(
             &sequence_type,
             &static_context,
+            None,
             &xot,
             &|_| unreachable!(),
         );
@@ -738,6 +760,58 @@ mod tests {
             Ok(Sequence::from(vec![
                 Item::from(atomic::Atomic::from(ibig!(1))),
                 Item::from(atomic::Atomic::from(ibig!(2))),
+            ]))
+        );
+    }
+
+    /// A provider that returns the same `xs:integer` for every node it is
+    /// asked about. `Send + Sync`-compatible because it stores the int
+    /// rather than the `Atomic` (which holds `Rc`).
+    struct IntProvider(i64);
+
+    impl NodeTypedValueProvider for IntProvider {
+        fn typed_value(
+            &self,
+            _xot: &Xot,
+            _node: xot::Node,
+        ) -> error::Result<Option<Vec<atomic::Atomic>>> {
+            Ok(Some(vec![atomic::Atomic::from(self.0)]))
+        }
+    }
+
+    #[test]
+    fn function_conversion_uses_the_typed_value_provider() {
+        let namespaces = Namespaces::default();
+        let sequence_type = parse_sequence_type("xs:integer*", &namespaces).unwrap();
+
+        let mut xot = Xot::new();
+        let doc = xot.parse(r#"<doc><a>1</a><b>2</b></doc>"#).unwrap();
+        let doc = xot.document_element(doc).unwrap();
+        let a = xot.first_child(doc).unwrap();
+        let b = xot.next_sibling(a).unwrap();
+
+        let right_sequence = Sequence::from(vec![Item::from(a), Item::from(b)]);
+
+        let static_context = context::StaticContext::default();
+        let provider: &dyn NodeTypedValueProvider = &IntProvider(99);
+
+        let right_result = right_sequence.sequence_type_matching_function_conversion(
+            &sequence_type,
+            &static_context,
+            Some(provider),
+            &xot,
+            &|_| unreachable!(),
+        );
+        // With a provider in scope, the <a>/<b> nodes atomize to the host's
+        // typed value (99) rather than being cast from their string content
+        // (1, 2) — demonstrating that function conversion consults the
+        // provider. Contrast with `test_many_cast_untyped` directly above,
+        // which is the same setup with `None` for the provider.
+        assert_eq!(
+            right_result,
+            Ok(Sequence::from(vec![
+                Item::from(atomic::Atomic::from(99i64)),
+                Item::from(atomic::Atomic::from(99i64)),
             ]))
         );
     }

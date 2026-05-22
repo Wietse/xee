@@ -301,6 +301,9 @@ pub(crate) trait Mappable {
             value.clone().sequence_type_matching_function_conversion(
                 &sequence_type,
                 static_context,
+                // option-parameter map coercion has no DynamicContext in
+                // scope, so no host typed-value provider is available here.
+                None,
                 xot,
                 // typed function tests can't be invoked
                 &|_function| unreachable!(),

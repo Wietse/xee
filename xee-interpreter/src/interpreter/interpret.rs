@@ -389,6 +389,7 @@ impl<'a> Interpreter<'a> {
                     let sequence = sequence.sequence_type_matching_function_conversion(
                         sequence_type,
                         self.runnable.static_context(),
+                        self.typed_value_provider(),
                         self.state.xot(),
                         &|function| self.runnable.function_info(function).signature(),
                     )?;
@@ -817,6 +818,7 @@ impl<'a> Interpreter<'a> {
                 let sequence = sequence.sequence_type_matching_function_conversion(
                     type_,
                     static_context,
+                    self.typed_value_provider(),
                     xot,
                     &|function| self.runnable.function_info(function).signature(),
                 )?;

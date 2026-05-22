@@ -7,7 +7,7 @@ use iri_string::types::{IriStr, IriString};
 
 use crate::{interpreter, sequence, xml};
 
-use super::dynamic_context::UserData;
+use super::dynamic_context::{NodeTypedValueProvider, TypedValueProviderSlot, UserData};
 use super::{DynamicContext, Variables};
 
 /// A builder for constructing a [`DynamicContext`].
@@ -30,6 +30,7 @@ pub struct DynamicContextBuilder<'a> {
     uri_collections: HashMap<IriString, sequence::Sequence>,
     environment_variables: HashMap<String, String>,
     user_data: Option<UserData>,
+    typed_value_provider: Option<TypedValueProviderSlot>,
 }
 
 /// A shallow wrapper around a collection of XML documents
@@ -78,6 +79,7 @@ impl<'a> DynamicContextBuilder<'a> {
             uri_collections: HashMap::new(),
             environment_variables: HashMap::new(),
             user_data: None,
+            typed_value_provider: None,
         }
     }
 
@@ -177,6 +179,19 @@ impl<'a> DynamicContextBuilder<'a> {
         self
     }
 
+    /// Install a [`NodeTypedValueProvider`] on the [`DynamicContext`].
+    ///
+    /// During atomization xee consults the provider for a node's typed
+    /// value before falling back to
+    /// `xs:untypedAtomic(string-value(node))`. This is a separate slot
+    /// from [`Self::user_data`] — a node's typed value is core evaluator
+    /// semantics, not extension-function host state. Calling this again
+    /// replaces the provider.
+    pub fn typed_value_provider(&mut self, provider: Arc<dyn NodeTypedValueProvider>) -> &mut Self {
+        self.typed_value_provider = Some(TypedValueProviderSlot::new(provider));
+        self
+    }
+
     fn uris_into_sequence(uris: &[&IriStr]) -> sequence::Sequence {
         // turn the URIs into a sequence
         let items: Vec<sequence::Item> = uris
@@ -203,6 +218,7 @@ impl<'a> DynamicContextBuilder<'a> {
             self.uri_collections.clone(),
             self.environment_variables.clone(),
             self.user_data.clone(),
+            self.typed_value_provider.clone(),
         )
     }
 }

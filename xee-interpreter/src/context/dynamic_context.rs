@@ -4,6 +4,7 @@ use std::any::Any;
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 
+use crate::atomic::Atomic;
 use crate::function::{self, Function};
 use crate::{error::Error, interpreter::Program};
 use crate::{interpreter, sequence};
@@ -26,6 +27,53 @@ impl UserData {
 impl Debug for UserData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("UserData(..)")
+    }
+}
+
+/// A host-provided source of typed values for nodes, consulted during
+/// atomization.
+///
+/// xee is schema-unaware: by default it atomizes every node as
+/// `xs:untypedAtomic(string-value(node))`. A host that knows a node's
+/// real typed value — for example from an XBRL DTS — installs a
+/// `NodeTypedValueProvider` on the [`DynamicContext`] to supply it.
+///
+/// The trait deliberately does not receive the [`DynamicContext`]: the
+/// provider is owned by the context, so passing it back in is awkward.
+// The `Send + Sync` bound buys no thread-safety today (`DynamicContext` is
+// `!Send` — it holds `Rc`), but keep it, mirroring the `user_data` slot:
+// relaxing a bound later is non-breaking, tightening it is not.
+pub trait NodeTypedValueProvider: Send + Sync {
+    /// The typed value of `node`, if the provider has one.
+    ///
+    /// - `Ok(Some(values))` — an authoritative typed value, as an XDM
+    ///   atomic sequence. `Ok(Some(vec![]))` is an authoritatively empty
+    ///   typed value (e.g. an `xsi:nil` element).
+    /// - `Ok(None)` — the provider has no opinion; the caller falls back
+    ///   to `xs:untypedAtomic(string-value(node))`.
+    /// - `Err(e)` — atomization of `node` fails with an XPath error.
+    fn typed_value(&self, xot: &xot::Xot, node: xot::Node) -> Result<Option<Vec<Atomic>>, Error>;
+}
+
+/// Wraps the host's [`NodeTypedValueProvider`] behind a newtype with a
+/// hand-written `Debug`, so [`DynamicContext`]'s `Debug` derive still
+/// holds (a bare `dyn` trait object is not `Debug`). Mirrors [`UserData`].
+#[derive(Clone)]
+pub(crate) struct TypedValueProviderSlot(Arc<dyn NodeTypedValueProvider>);
+
+impl TypedValueProviderSlot {
+    pub(crate) fn new(provider: Arc<dyn NodeTypedValueProvider>) -> Self {
+        Self(provider)
+    }
+
+    pub(crate) fn get(&self) -> &dyn NodeTypedValueProvider {
+        self.0.as_ref()
+    }
+}
+
+impl Debug for TypedValueProviderSlot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("TypedValueProviderSlot(..)")
     }
 }
 
@@ -65,6 +113,9 @@ pub struct DynamicContext<'a> {
     // a single typed slot of host-provided state, reachable from
     // extension functions via the typed `user_data` accessor
     user_data: Option<UserData>,
+    // a host-provided source of typed node values, consulted during
+    // atomization; absent means the default xs:untypedAtomic behavior
+    typed_value_provider: Option<TypedValueProviderSlot>,
 }
 
 impl<'a> DynamicContext<'a> {
@@ -81,6 +132,7 @@ impl<'a> DynamicContext<'a> {
         uri_collections: HashMap<IriString, sequence::Sequence>,
         environment_variables: HashMap<String, String>,
         user_data: Option<UserData>,
+        typed_value_provider: Option<TypedValueProviderSlot>,
     ) -> Self {
         Self {
             program,
@@ -94,6 +146,7 @@ impl<'a> DynamicContext<'a> {
             uri_collections,
             environment_variables,
             user_data,
+            typed_value_provider,
         }
     }
 
@@ -154,6 +207,18 @@ impl<'a> DynamicContext<'a> {
     /// they are passed.
     pub fn user_data<T: Any + Send + Sync>(&self) -> Option<&T> {
         self.user_data.as_ref()?.0.downcast_ref::<T>()
+    }
+
+    /// Access the host-provided typed-value provider, if one was set.
+    ///
+    /// Atomization consults this for a node's typed value before falling
+    /// back to `xs:untypedAtomic(string-value(node))`. Returns `None`
+    /// when no provider was installed on the
+    /// [`super::DynamicContextBuilder`]. This is a separate slot from
+    /// [`Self::user_data`]: a node's typed value is core evaluator
+    /// semantics, not extension-function host state.
+    pub fn typed_value_provider(&self) -> Option<&dyn NodeTypedValueProvider> {
+        self.typed_value_provider.as_ref().map(|p| p.get())
     }
 
     /// Access all environment variable names
@@ -269,5 +334,67 @@ mod tests {
             .user_data::<HostState>()
             .expect("user data should be present");
         assert_eq!(state.label, "second");
+    }
+
+    struct StubProvider {
+        label: &'static str,
+    }
+
+    impl NodeTypedValueProvider for StubProvider {
+        fn typed_value(
+            &self,
+            _xot: &xot::Xot,
+            _node: xot::Node,
+        ) -> Result<Option<Vec<Atomic>>, Error> {
+            Ok(Some(vec![Atomic::from(self.label)]))
+        }
+    }
+
+    fn stub_node() -> (xot::Xot, xot::Node) {
+        let mut xot = xot::Xot::new();
+        let root = xot.parse("<a/>").expect("valid XML");
+        (xot, root)
+    }
+
+    #[test]
+    fn typed_value_provider_unset_returns_none() {
+        let program = empty_program();
+        let builder = program.dynamic_context_builder();
+        let context = builder.build();
+
+        assert!(context.typed_value_provider().is_none());
+    }
+
+    #[test]
+    fn typed_value_provider_round_trips() {
+        let program = empty_program();
+        let mut builder = program.dynamic_context_builder();
+        builder.typed_value_provider(Arc::new(StubProvider { label: "dts" }));
+        let context = builder.build();
+
+        let (xot, node) = stub_node();
+        let value = context
+            .typed_value_provider()
+            .expect("provider should be present")
+            .typed_value(&xot, node)
+            .expect("provider should not error");
+        assert_eq!(value, Some(vec![Atomic::from("dts")]));
+    }
+
+    #[test]
+    fn typed_value_provider_last_write_wins() {
+        let program = empty_program();
+        let mut builder = program.dynamic_context_builder();
+        builder.typed_value_provider(Arc::new(StubProvider { label: "first" }));
+        builder.typed_value_provider(Arc::new(StubProvider { label: "second" }));
+        let context = builder.build();
+
+        let (xot, node) = stub_node();
+        let value = context
+            .typed_value_provider()
+            .unwrap()
+            .typed_value(&xot, node)
+            .unwrap();
+        assert_eq!(value, Some(vec![Atomic::from("second")]));
     }
 }

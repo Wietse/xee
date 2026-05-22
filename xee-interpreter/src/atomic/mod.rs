@@ -50,3 +50,8 @@ pub(crate) use op_ne::OpNe;
 pub(crate) use op_subtract::op_subtract;
 pub(crate) use round::{round_atomic, round_half_to_even_atomic};
 pub use types::{BinaryType, IntegerType, StringType};
+/// The name type carried by an [`Atomic::QName`] value, re-exported so
+/// code outside this crate can construct `xs:QName` atomics via
+/// `Atomic::from(name)`. Mirrors the re-exported `NaiveDateWithOffset` /
+/// `NaiveTimeWithOffset` / `NaiveDateTimeWithOffset` wrapper types.
+pub use xee_xpath_ast::ast::Name;

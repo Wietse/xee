@@ -183,14 +183,26 @@ where
         timezone: chrono::FixedOffset,
         provider: Option<&'a dyn NodeTypedValueProvider>,
         xot: &'a Xot,
-    ) -> error::Result<bool>
+    ) -> error::Result<Option<bool>>
     where
         O: AtomicCompare,
         J: Iterator<Item = Item> + 'a,
     {
-        let a = self.atomized_one(provider, xot)?;
-        let b = other.atomized_one(provider, xot)?;
-        O::atomic_compare(a, b, |a: &str, b: &str| collation.compare(a, b), timezone)
+        // Per XPath 3.1 §3.7.1: a value comparison whose either
+        // operand's atomized value is the empty sequence returns the
+        // empty sequence — not a type error. The interpreter's
+        // top-level `is_empty()` short-circuit catches the easy case
+        // (the sequence itself is empty); this guard catches the case
+        // where the sequence holds one node whose typed value (per the
+        // `NodeTypedValueProvider`) is the empty sequence — the shape
+        // an `xsi:nil="true"` element takes.
+        let Some(a) = self.atomized_option(provider, xot)? else {
+            return Ok(None);
+        };
+        let Some(b) = other.atomized_option(provider, xot)? else {
+            return Ok(None);
+        };
+        O::atomic_compare(a, b, |a: &str, b: &str| collation.compare(a, b), timezone).map(Some)
     }
 }
 

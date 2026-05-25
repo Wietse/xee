@@ -305,7 +305,7 @@ impl Sequence {
         timezone: chrono::FixedOffset,
         provider: Option<&dyn NodeTypedValueProvider>,
         xot: &Xot,
-    ) -> error::Result<bool>
+    ) -> error::Result<Option<bool>>
     where
         O: AtomicCompare,
     {

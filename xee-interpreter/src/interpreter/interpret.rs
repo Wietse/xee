@@ -981,15 +981,23 @@ impl<'a> Interpreter<'a> {
             self.state.push(sequence::Sequence::default());
             return Ok(());
         }
-        let v = a.value_compare(
+        // `value_compare` returns `Ok(None)` when atomization of either
+        // operand yields the empty sequence (e.g. a node whose typed
+        // value, per the NodeTypedValueProvider, is empty — an
+        // `xsi:nil` element). Per the spec the result is the empty
+        // sequence; mirror the top-level `is_empty()` short-circuit
+        // above and push `Sequence::default()`.
+        match a.value_compare(
             &b,
             op,
             self.runnable.default_collation()?.as_ref(),
             self.runnable.implicit_timezone(),
             self.typed_value_provider(),
             self.state.xot(),
-        )?;
-        self.state.push(v);
+        )? {
+            Some(v) => self.state.push(v),
+            None => self.state.push(sequence::Sequence::default()),
+        }
         Ok(())
     }
 

@@ -77,6 +77,58 @@ impl Debug for TypedValueProviderSlot {
     }
 }
 
+/// A host-provided source for an element node's `[nilled]` PSVI
+/// property, consulted by `fn:nilled`.
+///
+/// xee is schema-unaware: by default every element is reported as
+/// not nilled. A host that knows a node's PSVI nilled status — for
+/// example an XBRL processor treating wire-format `xsi:nil="true"`
+/// as authoritative — installs a `NodeNilledProvider` on the
+/// [`DynamicContext`] to supply it.
+///
+/// Parallel in shape to [`NodeTypedValueProvider`]: a single
+/// `Arc<H>` can implement both traits and be installed twice on the
+/// same context. They are deliberately separate traits because the
+/// XDM `[typed-value]` and `[nilled]` properties are independent
+/// PSVI properties, and a host may know one without the other.
+// The `Send + Sync` bound buys no thread-safety today (`DynamicContext`
+// is `!Send` — it holds `Rc`), but keep it for symmetry with
+// `NodeTypedValueProvider` and `user_data`: relaxing a bound later is
+// non-breaking, tightening it is not.
+pub trait NodeNilledProvider: Send + Sync {
+    /// The `[nilled]` property of `node`, if the provider has one.
+    ///
+    /// - `Some(true)` — the node is authoritatively nilled.
+    /// - `Some(false)` — the node is authoritatively not nilled.
+    /// - `None` — the provider has no opinion; the caller falls back
+    ///   to xee's schema-unaware default (not nilled).
+    ///
+    /// `fn:nilled` only calls this for element nodes; non-element
+    /// arguments are handled before reaching the provider.
+    fn nilled(&self, xot: &xot::Xot, node: xot::Node) -> Option<bool>;
+}
+
+/// Wraps the host's [`NodeNilledProvider`] behind a newtype with a
+/// hand-written `Debug`, parallel to [`TypedValueProviderSlot`].
+#[derive(Clone)]
+pub(crate) struct NilledProviderSlot(Arc<dyn NodeNilledProvider>);
+
+impl NilledProviderSlot {
+    pub(crate) fn new(provider: Arc<dyn NodeNilledProvider>) -> Self {
+        Self(provider)
+    }
+
+    pub(crate) fn get(&self) -> &dyn NodeNilledProvider {
+        self.0.as_ref()
+    }
+}
+
+impl Debug for NilledProviderSlot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NilledProviderSlot(..)")
+    }
+}
+
 /// A map of variables
 ///
 /// These are variables to be passed into an XPath evaluation.
@@ -116,6 +168,9 @@ pub struct DynamicContext<'a> {
     // a host-provided source of typed node values, consulted during
     // atomization; absent means the default xs:untypedAtomic behavior
     typed_value_provider: Option<TypedValueProviderSlot>,
+    // a host-provided source for an element's [nilled] PSVI property,
+    // consulted by fn:nilled; absent means the default (not nilled)
+    nilled_provider: Option<NilledProviderSlot>,
 }
 
 impl<'a> DynamicContext<'a> {
@@ -133,6 +188,7 @@ impl<'a> DynamicContext<'a> {
         environment_variables: HashMap<String, String>,
         user_data: Option<UserData>,
         typed_value_provider: Option<TypedValueProviderSlot>,
+        nilled_provider: Option<NilledProviderSlot>,
     ) -> Self {
         Self {
             program,
@@ -147,6 +203,7 @@ impl<'a> DynamicContext<'a> {
             environment_variables,
             user_data,
             typed_value_provider,
+            nilled_provider,
         }
     }
 
@@ -219,6 +276,18 @@ impl<'a> DynamicContext<'a> {
     /// semantics, not extension-function host state.
     pub fn typed_value_provider(&self) -> Option<&dyn NodeTypedValueProvider> {
         self.typed_value_provider.as_ref().map(|p| p.get())
+    }
+
+    /// Access the host-provided nilled provider, if one was set.
+    ///
+    /// `fn:nilled` consults this for an element node's `[nilled]` PSVI
+    /// property before falling back to the schema-unaware default (not
+    /// nilled). Returns `None` when no provider was installed on the
+    /// [`super::DynamicContextBuilder`]. Parallel slot to
+    /// [`Self::typed_value_provider`] — see [`NodeNilledProvider`] for
+    /// why the two are separate.
+    pub fn nilled_provider(&self) -> Option<&dyn NodeNilledProvider> {
+        self.nilled_provider.as_ref().map(|p| p.get())
     }
 
     /// Access all environment variable names

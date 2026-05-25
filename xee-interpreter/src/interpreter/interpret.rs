@@ -1130,6 +1130,14 @@ impl<'a> Interpreter<'a> {
         self.runnable.dynamic_context().typed_value_provider()
     }
 
+    /// Library-function entry point for the host's nilled provider,
+    /// parallel to `typed_value_provider`. `fn:nilled` consults this
+    /// to derive an element's `[nilled]` PSVI property; absent means
+    /// fall back to xee's schema-unaware default (not nilled).
+    pub(crate) fn nilled_provider(&self) -> Option<&dyn crate::context::NodeNilledProvider> {
+        self.runnable.dynamic_context().nilled_provider()
+    }
+
     pub(crate) fn xot_mut(&mut self) -> &mut Xot {
         self.state.xot_mut()
     }

@@ -7,7 +7,10 @@ use iri_string::types::{IriStr, IriString};
 
 use crate::{interpreter, sequence, xml};
 
-use super::dynamic_context::{NodeTypedValueProvider, TypedValueProviderSlot, UserData};
+use super::dynamic_context::{
+    NilledProviderSlot, NodeNilledProvider, NodeTypedValueProvider, TypedValueProviderSlot,
+    UserData,
+};
 use super::{DynamicContext, Variables};
 
 /// A builder for constructing a [`DynamicContext`].
@@ -31,6 +34,7 @@ pub struct DynamicContextBuilder<'a> {
     environment_variables: HashMap<String, String>,
     user_data: Option<UserData>,
     typed_value_provider: Option<TypedValueProviderSlot>,
+    nilled_provider: Option<NilledProviderSlot>,
 }
 
 /// A shallow wrapper around a collection of XML documents
@@ -80,6 +84,7 @@ impl<'a> DynamicContextBuilder<'a> {
             environment_variables: HashMap::new(),
             user_data: None,
             typed_value_provider: None,
+            nilled_provider: None,
         }
     }
 
@@ -192,6 +197,19 @@ impl<'a> DynamicContextBuilder<'a> {
         self
     }
 
+    /// Install a [`NodeNilledProvider`] on the [`DynamicContext`].
+    ///
+    /// `fn:nilled` consults the provider for an element node's
+    /// `[nilled]` property before falling back to the schema-unaware
+    /// default (not nilled). Parallel slot to
+    /// [`Self::typed_value_provider`]: a host that knows both PSVI
+    /// properties typically installs the same `Arc<H>` on both slots.
+    /// Calling this again replaces the provider.
+    pub fn nilled_provider(&mut self, provider: Arc<dyn NodeNilledProvider>) -> &mut Self {
+        self.nilled_provider = Some(NilledProviderSlot::new(provider));
+        self
+    }
+
     fn uris_into_sequence(uris: &[&IriStr]) -> sequence::Sequence {
         // turn the URIs into a sequence
         let items: Vec<sequence::Item> = uris
@@ -219,6 +237,7 @@ impl<'a> DynamicContextBuilder<'a> {
             self.environment_variables.clone(),
             self.user_data.clone(),
             self.typed_value_provider.clone(),
+            self.nilled_provider.clone(),
         )
     }
 }

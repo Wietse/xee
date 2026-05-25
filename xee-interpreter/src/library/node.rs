@@ -96,19 +96,28 @@ fn root(interpreter: &Interpreter, arg: Option<xot::Node>) -> Option<xot::Node> 
 /// fn-and-operators §14.2.3 / §15.3.
 ///
 /// Empty input, or any non-element node → empty sequence. For an
-/// element node, returns the value of the `[nilled]` PSVI property.
-/// xee is schema-unaware: with no PSVI available, every element is
-/// reported as not nilled (`Some(false)`) — matching the QT3
-/// `fn-nilled-*` cases, which assert `false` for inline elements
-/// even when they carry an `xsi:nil="true"` attribute (those tests
-/// rely on schema validation having run, which has not).
+/// element node, returns the value of the `[nilled]` PSVI property,
+/// which xee obtains from the host's
+/// [`NodeNilledProvider`](crate::context::NodeNilledProvider) if one
+/// is installed. With no provider — or with a provider that returns
+/// `None` for the node — the schema-unaware default of not-nilled
+/// (`Some(false)`) is reported, matching the QT3 `fn-nilled-*`
+/// cases. An XBRL host that treats wire-format `xsi:nil="true"` as
+/// authoritative installs a provider returning `Some(true)` for such
+/// elements.
 #[xpath_fn("fn:nilled($arg as node()?) as xs:boolean?", context_first)]
 fn nilled(interpreter: &Interpreter, arg: Option<xot::Node>) -> Option<bool> {
     let node = arg?;
-    if !interpreter.xot().is_element(node) {
+    let xot = interpreter.xot();
+    if !xot.is_element(node) {
         return None;
     }
-    Some(false)
+    Some(
+        interpreter
+            .nilled_provider()
+            .and_then(|p| p.nilled(xot, node))
+            .unwrap_or(false),
+    )
 }
 
 #[xpath_fn("fn:has-children($node as node()?) as xs:boolean", context_first)]

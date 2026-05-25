@@ -92,6 +92,25 @@ fn root(interpreter: &Interpreter, arg: Option<xot::Node>) -> Option<xot::Node> 
     arg.map(|arg| interpreter.xot().root(arg))
 }
 
+/// `fn:nilled($arg as node()?) as xs:boolean?` — XPath 3.1
+/// fn-and-operators §14.2.3 / §15.3.
+///
+/// Empty input, or any non-element node → empty sequence. For an
+/// element node, returns the value of the `[nilled]` PSVI property.
+/// xee is schema-unaware: with no PSVI available, every element is
+/// reported as not nilled (`Some(false)`) — matching the QT3
+/// `fn-nilled-*` cases, which assert `false` for inline elements
+/// even when they carry an `xsi:nil="true"` attribute (those tests
+/// rely on schema validation having run, which has not).
+#[xpath_fn("fn:nilled($arg as node()?) as xs:boolean?", context_first)]
+fn nilled(interpreter: &Interpreter, arg: Option<xot::Node>) -> Option<bool> {
+    let node = arg?;
+    if !interpreter.xot().is_element(node) {
+        return None;
+    }
+    Some(false)
+}
+
 #[xpath_fn("fn:has-children($node as node()?) as xs:boolean", context_first)]
 fn has_children(interpreter: &Interpreter, node: Option<xot::Node>) -> bool {
     if let Some(node) = node {
@@ -264,6 +283,7 @@ pub(crate) fn static_function_descriptions() -> Vec<StaticFunctionDescription> {
         wrap_xpath_fn!(namespace_uri),
         wrap_xpath_fn!(lang),
         wrap_xpath_fn!(root),
+        wrap_xpath_fn!(nilled),
         wrap_xpath_fn!(has_children),
         wrap_xpath_fn!(innermost),
         wrap_xpath_fn!(outermost),

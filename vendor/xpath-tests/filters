@@ -179,7 +179,6 @@ default-language-006
 = fn-distinct-values
 fn-distinct-values-mixed-args-005
 = fn-doc
-fn-doc-15
 fn-doc-25
 fn-doc-26
 fn-doc-27
@@ -835,10 +834,6 @@ millisecs-904
 millisecs-905
 = fn-function-arity
 = fn-function-lookup
-fn-function-lookup-005
-fn-function-lookup-006
-fn-function-lookup-007
-fn-function-lookup-008
 fn-function-lookup-053
 fn-function-lookup-054
 fn-function-lookup-055
@@ -1115,18 +1110,6 @@ fn-lower-case-19
 = fn-namespace-uri-for-prefix
 = fn-namespace-uri-from-QName
 = fn-nilled
-K-NilledFunc-3
-K-NilledFunc-4
-fn-nilled-1
-fn-nilled-2
-fn-nilled-23
-fn-nilled-24
-fn-nilled-25
-fn-nilled-26
-fn-nilled-28
-fn-nilled-29
-fn-nilled-3
-fn-nilled-30
 = fn-node-name
 = fn-normalize-space
 fn-normalize-space0args-1
@@ -1913,10 +1896,6 @@ K2-NameTest-37
 K2-NameTest-38
 K2-NameTest-84
 = prod-NamedFunctionRef
-function-literal-005
-function-literal-006
-function-literal-007
-function-literal-008
 function-literal-053
 function-literal-054
 function-literal-055

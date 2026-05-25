@@ -1710,20 +1710,11 @@ op-multiply-yearMonthDuration-20
 = op-numeric-equal
 K-NumericEqual-45
 = op-numeric-greater-than
-K-NumericGT-13
-K-NumericGT-14
-K-NumericGT-15
-K-NumericGT-16
-K2-NumericGT-4
 = op-numeric-integer-divide
 K-NumericIntegerDivide-46
 K-NumericIntegerDivide-47
 op-numeric-integer-dividemix2args-2
 = op-numeric-less-than
-K-NumericLT-17
-K-NumericLT-18
-K-NumericLT-19
-K-NumericLT-20
 = op-numeric-mod
 = op-numeric-multiply
 = op-numeric-subtract
@@ -2018,7 +2009,6 @@ K-SeqExprTreat-16
 = prod-UnorderedExpr
 = prod-ValidateExpr
 = prod-ValueComp
-value-comparison-7
 = prod-VarDecl
 = prod-VarDecl.external
 = prod-VarDefaultValue

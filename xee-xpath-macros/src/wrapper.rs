@@ -32,7 +32,8 @@ pub(crate) fn xpath_fn_wrapper(
         #[doc(hidden)]
         #vis mod #name {
             pub(crate) struct MakeWrapper;
-            pub(crate) const WRAPPER: crate::function::StaticFunctionType = MakeWrapper::WRAPPER;
+            pub(crate) const WRAPPER: ::xee_interpreter::function::StaticFunctionType =
+                MakeWrapper::WRAPPER;
             // We store the signature as a string; this means we need to
             // reparse it again later during registration, but it's a lot
             // easier than trying to serialize a data structure, so it will
@@ -49,7 +50,7 @@ pub(crate) fn xpath_fn_wrapper(
             // This is a trick to ensure we can get it into the module defined
             // above
             impl #name::MakeWrapper {
-                const WRAPPER: crate::function::StaticFunctionType = #wrapper_name;
+                const WRAPPER: ::xee_interpreter::function::StaticFunctionType = #wrapper_name;
             }
             #vis #wrapper
         };
@@ -65,14 +66,21 @@ fn make_wrapper(
     let mut conversions = Vec::new();
     let mut conversion_names = Vec::new();
     let mut adjust = 0;
-    let context_ident = get_argument_ident(ast, adjust, "context")?;
-    if let Some(context_ident) = context_ident {
-        conversion_names.push(context_ident);
-        adjust += 1
+    // The wrapper's parameters are hardcoded under prefixed names
+    // (`__xpath_fn_context`, `__xpath_fn_interpreter`,
+    // `__xpath_fn_arguments`) so an XPath signature parameter named
+    // `$context` or `$arguments` can never shadow them. Injection
+    // simply forwards these prefixed locals into the user's function.
+    let ctx_local: Ident = Ident::new("__xpath_fn_context", Span::call_site());
+    let interp_local: Ident = Ident::new("__xpath_fn_interpreter", Span::call_site());
+    let args_local: Ident = Ident::new("__xpath_fn_arguments", Span::call_site());
+
+    if is_injected_arg(ast, adjust, "context", "xpath_context")? {
+        conversion_names.push(ctx_local.clone());
+        adjust += 1;
     }
-    let interpreter_ident = get_argument_ident(ast, adjust, "interpreter")?;
-    if let Some(interpreter_ident) = interpreter_ident {
-        conversion_names.push(interpreter_ident);
+    if is_injected_arg(ast, adjust, "interpreter", "xpath_interpreter")? {
+        conversion_names.push(interp_local.clone());
         adjust += 1;
     }
 
@@ -96,13 +104,14 @@ fn make_wrapper(
     for (i, param) in signature.params.iter().enumerate() {
         let name = Ident::new(param.name.local_name(), Span::call_site());
         conversion_names.push(name.clone());
-        let arg = quote!(arguments[#i]);
+        let arg = quote!(#args_local[#i]);
         let fn_arg = &ast.sig.inputs[i + adjust];
         conversions.push(convert_sequence_type(
             &param.type_,
             fn_arg,
             name.to_token_stream(),
             arg,
+            &interp_local,
         )?);
     }
 
@@ -117,35 +126,86 @@ fn make_wrapper(
     };
 
     Ok(quote!(
-        fn #wrapper_name(context: &crate::context::DynamicContext, interpreter: &mut crate::interpreter::Interpreter, arguments: &[crate::sequence::Sequence]) -> Result<crate::sequence::Sequence, crate::error::Error> {
-        #body
-    }))
+        fn #wrapper_name(
+            #ctx_local: &::xee_interpreter::context::DynamicContext,
+            #interp_local: &mut ::xee_interpreter::interpreter::Interpreter,
+            #args_local: &[::xee_interpreter::sequence::Sequence],
+        ) -> ::std::result::Result<
+            ::xee_interpreter::sequence::Sequence,
+            ::xee_interpreter::error::Error,
+        > {
+            #body
+        }
+    ))
 }
 
-fn get_argument_ident(ast: &ItemFn, index: usize, name: &str) -> syn::Result<Option<Ident>> {
+/// Decide whether the argument at `index` in `ast.sig.inputs` should
+/// be treated as the macro-injected `context` / `interpreter` slot.
+///
+/// Two ways to opt in to injection at the given position:
+///
+/// 1. The argument carries an explicit parameter attribute named
+///    `attr_name` (e.g. `#[xpath_context]` for the context slot).
+///    The macro strips these helper attributes before re-emitting
+///    the user's function — see [`strip_injection_attrs`].
+///
+/// 2. The argument is named with the literal fallback identifier
+///    `fallback_name` (e.g. `context` for the context slot). This
+///    preserves backwards compatibility with existing internal
+///    library functions.
+///
+/// Type-based detection was tried earlier and rejected: a proc macro
+/// only sees syntax, so any type-shape match is necessarily heuristic
+/// (false positives for unrelated `&my_app::context::DynamicContext`,
+/// false negatives for renamed imports or type aliases). Explicit
+/// attribute opt-in is unambiguous.
+fn is_injected_arg(
+    ast: &ItemFn,
+    index: usize,
+    fallback_name: &str,
+    attr_name: &str,
+) -> syn::Result<bool> {
     if index >= ast.sig.inputs.len() {
-        return Ok(None);
+        return Ok(false);
+    }
+    let arg = &ast.sig.inputs[index];
+    let pat_type = match arg {
+        syn::FnArg::Typed(pat_type) => pat_type,
+        syn::FnArg::Receiver(r) => {
+            bail_spanned!(r.span() => "XPath functions cannot take `self` as an argument");
+        }
+    };
+
+    // Explicit attribute wins.
+    if pat_type
+        .attrs
+        .iter()
+        .any(|attr| attr.path().is_ident(attr_name))
+    {
+        return Ok(true);
     }
 
-    if !ast.sig.inputs.is_empty() {
-        let maybe_context_arg = &ast.sig.inputs[index];
-        match &maybe_context_arg {
-            syn::FnArg::Typed(pat_type) => match &*pat_type.pat {
-                syn::Pat::Ident(ident) => Ok(if ident.ident == name {
-                    Some(ident.ident.clone())
-                } else {
-                    None
-                }),
-                _ => {
-                    bail_spanned!(pat_type.span() => "XPath functions can only take identifiers as arguments");
-                }
-            },
-            syn::FnArg::Receiver(r) => {
-                bail_spanned!(r.span() => "XPath functions cannot take `self` as an argument");
-            }
+    // Name-based fallback.
+    if let syn::Pat::Ident(pat_ident) = &*pat_type.pat {
+        if pat_ident.ident == fallback_name {
+            return Ok(true);
         }
-    } else {
-        Ok(None)
+    }
+
+    Ok(false)
+}
+
+/// Walk the function's parameters and remove the helper attributes
+/// (`#[xpath_context]`, `#[xpath_interpreter]`) the macro consumes.
+/// Without this, the compiler would see them in the re-emitted user
+/// function and complain that the attributes are unknown.
+pub(crate) fn strip_injection_attrs(ast: &mut ItemFn) {
+    for arg in &mut ast.sig.inputs {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            pat_type.attrs.retain(|attr| {
+                !attr.path().is_ident("xpath_context") && !attr.path().is_ident("xpath_interpreter")
+            });
+        }
     }
 }
 
@@ -240,5 +300,85 @@ mod tests {
         )
         .unwrap();
         assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap_err().to_string());
+    }
+
+    #[test]
+    fn test_wrapper_context_injection_by_explicit_attr() {
+        // The variable is named `ctx`, not `context`, so name-based
+        // detection does not fire. The `#[xpath_context]` parameter
+        // attribute makes the injection explicit. The snapshot must
+        // show the wrapper passing its `__xpath_fn_context` local to
+        // the user's `foo`, *not* a name like `ctx` that the wrapper
+        // never binds.
+        let options =
+            parse_str::<XPathFnOptions>(r#""fn:foo($x as xs:int) as xs:string""#).unwrap();
+        let ast = parse_str::<ItemFn>(
+            r#"fn foo(#[xpath_context] ctx: &DynamicContext, x: &i64) -> String { format!("{}", x) }"#,
+        )
+        .unwrap();
+        assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_wrapper_interpreter_injection_by_explicit_attr() {
+        let options =
+            parse_str::<XPathFnOptions>(r#""fn:foo($x as xs:int) as xs:string""#).unwrap();
+        let ast = parse_str::<ItemFn>(
+            r#"fn foo(#[xpath_interpreter] interp: &mut Interpreter, x: &i64) -> String { format!("{}", x) }"#,
+        )
+        .unwrap();
+        assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_wrapper_explicit_attr_overrides_arbitrary_type_name() {
+        // The user signals injection explicitly via the attribute,
+        // even though the Rust type isn't obviously a `DynamicContext`.
+        // We trust the user; if the type doesn't actually match what
+        // the wrapper passes in, rustc will catch the mismatch with a
+        // clean error pointing at the user's code.
+        let options = parse_str::<XPathFnOptions>(r#""fn:foo() as xs:string""#).unwrap();
+        let ast = parse_str::<ItemFn>(
+            r#"fn foo(#[xpath_context] dc: &my_app::DynamicContext) -> String { String::new() }"#,
+        )
+        .unwrap();
+        // The macro expansion succeeds; the resulting wrapper relies on
+        // rustc to verify that `&my_app::DynamicContext` is compatible
+        // with the value the wrapper passes in.
+        assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_wrapper_xpath_param_named_context_does_not_shadow_injection() {
+        // The XPath signature has a parameter literally named
+        // `$context`. The wrapper's injected local is now prefixed
+        // (`__xpath_fn_context`), so the user's emitted
+        // `let context = …;` for the regular param cannot shadow it.
+        // The snapshot must show the call passing both locals
+        // independently: `foo(__xpath_fn_context, context)`.
+        let options =
+            parse_str::<XPathFnOptions>(r#""fn:foo($context as xs:string) as xs:string""#).unwrap();
+        let ast = parse_str::<ItemFn>(
+            r#"fn foo(#[xpath_context] ctx: &DynamicContext, s: &str) -> String { format!("{}", s) }"#,
+        )
+        .unwrap();
+        assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap().to_string());
+    }
+
+    #[test]
+    fn test_wrapper_xpath_param_named_arguments_does_not_shadow_slice() {
+        // The XPath signature has parameters literally named
+        // `$arguments` and `$x`. The wrapper's slice parameter is now
+        // `__xpath_fn_arguments`, so emitting `let arguments = …;` for
+        // the first user param cannot shadow the slice when the second
+        // user param's conversion is generated.
+        let options = parse_str::<XPathFnOptions>(
+            r#""fn:foo($arguments as xs:int, $x as xs:int) as xs:int""#,
+        )
+        .unwrap();
+        let ast =
+            parse_str::<ItemFn>(r#"fn foo(arguments: &i64, x: &i64) -> i64 { *arguments + *x }"#)
+                .unwrap();
+        assert_debug_snapshot!(xpath_fn_wrapper(&ast, &options).unwrap().to_string());
     }
 }

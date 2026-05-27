@@ -62,5 +62,6 @@ rand_xoshiro = "0.6.0"
 [dev-dependencies]
 insta = { workspace = true, features = ["yaml", "glob"] }
 test-generator = "0.3.1"
+trybuild = "1"
 xot = { workspace = true, features = ["proptest"] }
 rust_decimal_macros = { workspace = true }

@@ -13,8 +13,9 @@ use crate::library::static_function_descriptions;
 use crate::sequence;
 use crate::stack;
 
+#[doc(hidden)]
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Copy)]
-pub(crate) enum FunctionKind {
+pub enum FunctionKind {
     // generate a function with one less arity that takes the
     // item as the first argument
     ItemFirst,
@@ -37,7 +38,8 @@ pub(crate) enum FunctionKind {
 }
 
 impl FunctionKind {
-    pub(crate) fn parse(s: &str) -> Option<FunctionKind> {
+    #[doc(hidden)]
+    pub fn parse(s: &str) -> Option<FunctionKind> {
         match s {
             "" => None,
             "context_first" => Some(FunctionKind::ItemFirst),
@@ -52,13 +54,15 @@ impl FunctionKind {
     }
 }
 
-pub(crate) type StaticFunctionType = fn(
+#[doc(hidden)]
+pub type StaticFunctionType = fn(
     context: &DynamicContext,
     interpreter: &mut interpreter::Interpreter,
     arguments: &[sequence::Sequence],
 ) -> error::Result<sequence::Sequence>;
 
-pub(crate) struct StaticFunctionDescription {
+#[doc(hidden)]
+pub struct StaticFunctionDescription {
     pub(crate) name: Name,
     pub(crate) signature: function::Signature,
     pub(crate) function_kind: Option<FunctionKind>,
@@ -82,7 +86,8 @@ macro_rules! wrap_xpath_fn {
 }
 
 impl StaticFunctionDescription {
-    pub(crate) fn new(
+    #[doc(hidden)]
+    pub fn new(
         func: StaticFunctionType,
         signature: &str,
         function_kind: Option<FunctionKind>,

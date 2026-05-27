@@ -180,8 +180,13 @@ impl Sequence {
         }
     }
 
-    /// Is used internally by the library macro.
-    pub(crate) fn unboxed_atomized<'a, T: 'a>(
+    /// Macro-support entry point: called by `#[xpath_fn]`-generated
+    /// wrappers when an XPath atomic-type parameter (e.g.
+    /// `xs:integer`) needs to be converted to a typed Rust value.
+    /// Not part of the public API surface; callers outside the
+    /// macro shouldn't name it directly.
+    #[doc(hidden)]
+    pub fn unboxed_atomized<'a, T: 'a>(
         &'a self,
         xot: &'a xot::Xot,
         extract: impl Fn(atomic::Atomic) -> error::Result<T> + 'a,

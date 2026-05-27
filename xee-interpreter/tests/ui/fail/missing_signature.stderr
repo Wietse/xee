@@ -1,0 +1,7 @@
+error: unexpected end of input, missing XPath signature string — #[xpath_fn(...)] requires a signature literal like "fn:foo($x as xs:integer) as xs:integer" as one of its arguments
+ --> tests/ui/fail/missing_signature.rs:8:1
+  |
+8 | #[xpath_fn(context_first)]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `xpath_fn` (in Nightly builds, run with -Z macro-backtrace for more info)

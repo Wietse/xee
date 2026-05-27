@@ -4,8 +4,10 @@ use syn::{
     LitStr, Result,
 };
 
+use xot::xmlname::NameStrInfo;
+
 use xee_xpath_ast::ast::Signature;
-use xee_xpath_ast::Namespaces;
+use xee_xpath_ast::{Namespaces, ParserError};
 
 #[derive(Debug)]
 pub(crate) struct XPathFnOptions {
@@ -54,7 +56,7 @@ impl Parse for XPathFnOptions {
         };
         let namespaces = Namespaces::default();
         let signature = Signature::parse(&signature_string, &namespaces)
-            .map_err(|e| input.error(format!("{:?}", e)))?;
+            .map_err(|e| input.error(format_parser_error(&e, &signature_string)))?;
         Ok(Self {
             signature,
             kind,
@@ -104,6 +106,45 @@ impl Parse for XPathFnOption {
     }
 }
 
+/// Render a `ParserError` from `xee-xpath-ast` as a human-readable
+/// message suitable for surfacing through `syn::Error`. Includes a
+/// pointer to the offending region of the signature string so the
+/// user can locate the problem within their own source.
+fn format_parser_error(error: &ParserError, signature: &str) -> String {
+    let span = error.span();
+    let (start, end) = (span.start, span.end);
+    let region = signature.get(start..end).unwrap_or("");
+    let prefix = format!("invalid XPath signature `{signature}`");
+    match error {
+        ParserError::ExpectedFound { .. } => {
+            if region.is_empty() {
+                format!("{prefix}: unexpected end of input")
+            } else {
+                format!("{prefix}: unexpected token `{region}` at byte position {start}..{end}")
+            }
+        }
+        ParserError::UnknownPrefix {
+            prefix: ns_prefix, ..
+        } => format!(
+            "{prefix}: unknown namespace prefix `{ns_prefix}` at byte position {start}..{end}"
+        ),
+        ParserError::Reserved { name, .. } => {
+            format!("{prefix}: `{name}` is a reserved name (at byte position {start}..{end})")
+        }
+        ParserError::ArityOverflow { .. } => {
+            format!("{prefix}: too many parameters declared (at byte position {start}..{end})")
+        }
+        ParserError::UnknownType { name, .. } => format!(
+            "{prefix}: unknown type `{}` at byte position {start}..{end}",
+            name.full_name()
+        ),
+        ParserError::IllegalFunctionInPattern { name, .. } => format!(
+            "{prefix}: `{}` cannot appear in this context (at byte position {start}..{end})",
+            name.full_name()
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +186,24 @@ mod tests {
         // #[xpath_fn(context_first)] with no signature string should
         // surface a clean error, not a panic.
         assert_debug_snapshot!(syn::parse_str::<XPathFnOptions>(r#"context_first"#));
+    }
+
+    #[test]
+    fn test_parse_unknown_prefix_message() {
+        // A signature using an unbound namespace prefix should
+        // surface as a readable message naming the prefix, not a
+        // Debug-formatted ParserError dump.
+        assert_debug_snapshot!(syn::parse_str::<XPathFnOptions>(
+            r#""nope:foo() as xs:string""#
+        ));
+    }
+
+    #[test]
+    fn test_parse_unknown_type_message() {
+        // Using a non-existent xs:* type should produce a message
+        // pointing at the bad type name.
+        assert_debug_snapshot!(syn::parse_str::<XPathFnOptions>(
+            r#""fn:foo() as xs:bogusType""#
+        ));
     }
 }

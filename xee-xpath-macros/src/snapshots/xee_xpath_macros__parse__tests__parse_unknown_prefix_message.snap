@@ -1,0 +1,9 @@
+---
+source: xee-xpath-macros/src/parse.rs
+expression: "syn::parse_str::<XPathFnOptions>(r#\"\"nope:foo() as xs:string\"\"#)"
+---
+Err(
+    Error(
+        "unexpected end of input, invalid XPath signature `nope:foo() as xs:string`: unknown namespace prefix `nope` at byte position 0..8",
+    ),
+)

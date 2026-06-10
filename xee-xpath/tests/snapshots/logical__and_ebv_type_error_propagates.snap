@@ -1,0 +1,15 @@
+---
+source: xee-xpath/tests/logical.rs
+expression: "run(\"true() and (1, 2)\")"
+---
+Err(
+    SpannedError {
+        error: FORG0006,
+        span: Some(
+            SourceSpan(
+                0,
+                17,
+            ),
+        ),
+    },
+)

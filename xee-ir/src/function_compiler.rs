@@ -100,6 +100,9 @@ impl<'a> FunctionCompiler<'a> {
         match &atom.value {
             ir::Atom::Const(c) => {
                 match c {
+                    ir::Const::Boolean(b) => {
+                        self.builder.emit_constant((*b).into(), span);
+                    }
                     ir::Const::Integer(i) => {
                         self.builder.emit_constant((i.clone()).into(), span);
                     }
@@ -274,7 +277,11 @@ impl<'a> FunctionCompiler<'a> {
                 self.builder.emit(Instruction::Concat, span);
             }
             ir::BinaryOperator::And => {
-                // XXX we don't do any short-circuiting of evaluation yet
+                // No short-circuiting here: both operands are atoms, so they
+                // are already evaluated by the time we get here. The XPath
+                // compiler lowers `and` to conditionals instead of this
+                // operator precisely to get short-circuit evaluation; this
+                // arm only serves IR constructed directly with `And`.
                 let first_false = self.builder.emit_jump_forward(JumpCondition::False, span);
                 let second_false = self.builder.emit_jump_forward(JumpCondition::False, span);
                 // both are true, so put true on stack and jump to end
@@ -289,7 +296,7 @@ impl<'a> FunctionCompiler<'a> {
                 self.builder.patch_jump(end);
             }
             ir::BinaryOperator::Or => {
-                // XXX we don't do any short-circuiting of evaluation yet
+                // No short-circuiting here either; see the `And` arm above.
                 let first_true = self.builder.emit_jump_forward(JumpCondition::True, span);
                 let second_true = self.builder.emit_jump_forward(JumpCondition::True, span);
                 // both are false, so put false on stack and jump to end

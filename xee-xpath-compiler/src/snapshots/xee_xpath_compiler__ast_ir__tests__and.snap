@@ -1,0 +1,143 @@
+---
+source: xee-xpath-compiler/src/ast_ir.rs
+expression: "convert_expr_single(\"1 gt 2 and 3 gt 4\")"
+---
+Ok(
+    Spanned {
+        value: Let(
+            Let {
+                name: Name(
+                    "v2",
+                ),
+                var_expr: Spanned {
+                    value: Binary(
+                        Binary {
+                            left: Spanned {
+                                value: Const(
+                                    Integer(
+                                        1,
+                                    ),
+                                ),
+                                span: 0..1,
+                            },
+                            op: ValueGt,
+                            right: Spanned {
+                                value: Const(
+                                    Integer(
+                                        2,
+                                    ),
+                                ),
+                                span: 5..6,
+                            },
+                        },
+                    ),
+                    span: 0..6,
+                },
+                return_expr: Spanned {
+                    value: If(
+                        If {
+                            condition: Spanned {
+                                value: Variable(
+                                    Name(
+                                        "v2",
+                                    ),
+                                ),
+                                span: 0..6,
+                            },
+                            then: Spanned {
+                                value: Let(
+                                    Let {
+                                        name: Name(
+                                            "v5",
+                                        ),
+                                        var_expr: Spanned {
+                                            value: Binary(
+                                                Binary {
+                                                    left: Spanned {
+                                                        value: Const(
+                                                            Integer(
+                                                                3,
+                                                            ),
+                                                        ),
+                                                        span: 11..12,
+                                                    },
+                                                    op: ValueGt,
+                                                    right: Spanned {
+                                                        value: Const(
+                                                            Integer(
+                                                                4,
+                                                            ),
+                                                        ),
+                                                        span: 16..17,
+                                                    },
+                                                },
+                                            ),
+                                            span: 11..17,
+                                        },
+                                        return_expr: Spanned {
+                                            value: If(
+                                                If {
+                                                    condition: Spanned {
+                                                        value: Variable(
+                                                            Name(
+                                                                "v5",
+                                                            ),
+                                                        ),
+                                                        span: 11..17,
+                                                    },
+                                                    then: Spanned {
+                                                        value: Atom(
+                                                            Spanned {
+                                                                value: Const(
+                                                                    Boolean(
+                                                                        true,
+                                                                    ),
+                                                                ),
+                                                                span: 0..17,
+                                                            },
+                                                        ),
+                                                        span: 0..17,
+                                                    },
+                                                    else_: Spanned {
+                                                        value: Atom(
+                                                            Spanned {
+                                                                value: Const(
+                                                                    Boolean(
+                                                                        false,
+                                                                    ),
+                                                                ),
+                                                                span: 0..17,
+                                                            },
+                                                        ),
+                                                        span: 0..17,
+                                                    },
+                                                },
+                                            ),
+                                            span: 0..17,
+                                        },
+                                    },
+                                ),
+                                span: 0..17,
+                            },
+                            else_: Spanned {
+                                value: Atom(
+                                    Spanned {
+                                        value: Const(
+                                            Boolean(
+                                                false,
+                                            ),
+                                        ),
+                                        span: 0..17,
+                                    },
+                                ),
+                                span: 0..17,
+                            },
+                        },
+                    ),
+                    span: 0..17,
+                },
+            },
+        ),
+        span: 0..17,
+    },
+)

@@ -69,6 +69,7 @@ pub enum Atom {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Const {
+    Boolean(bool),
     Integer(IBig),
     String(String),
     Double(OrderedFloat<f64>),

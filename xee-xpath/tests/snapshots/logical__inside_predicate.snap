@@ -1,0 +1,16 @@
+---
+source: xee-xpath/tests/logical.rs
+expression: "run(\"(1, 2, 3)[. gt 1 and . lt 3]\")"
+---
+Ok(
+    One(
+        One {
+            item: Atomic(
+                Integer(
+                    Integer,
+                    2,
+                ),
+            ),
+        },
+    ),
+)

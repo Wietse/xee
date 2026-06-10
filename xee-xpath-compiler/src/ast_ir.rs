@@ -345,17 +345,85 @@ impl<'a> IrConverter<'a> {
     }
 
     fn binary_expr(&mut self, ast: &ast::BinaryExpr, span: Span) -> error::SpannedResult<Bindings> {
-        let mut left_bindings = self.path_expr(&ast.left)?;
-        let mut right_bindings = self.path_expr(&ast.right)?;
-        let op = self.binary_op(ast.operator);
-        let expr = ir::Expr::Binary(ir::Binary {
-            left: left_bindings.atom(),
-            op,
-            right: right_bindings.atom(),
-        });
-        let binding = self.variables.new_binding(expr, span);
+        match ast.operator {
+            ast::BinaryOperator::And | ast::BinaryOperator::Or => self.logical_expr(ast, span),
+            _ => {
+                let mut left_bindings = self.path_expr(&ast.left)?;
+                let mut right_bindings = self.path_expr(&ast.right)?;
+                let op = self.binary_op(ast.operator);
+                let expr = ir::Expr::Binary(ir::Binary {
+                    left: left_bindings.atom(),
+                    op,
+                    right: right_bindings.atom(),
+                });
+                let binding = self.variables.new_binding(expr, span);
 
-        Ok(left_bindings.concat(right_bindings).bind(binding))
+                Ok(left_bindings.concat(right_bindings).bind(binding))
+            }
+        }
+    }
+
+    /// Lower `and` / `or` to conditionals so that evaluation short-circuits
+    /// left to right:
+    ///
+    /// - `A and B` becomes `if (A) then (if (B) then true() else false()) else false()`
+    /// - `A or B` becomes `if (A) then true() else (if (B) then true() else false())`
+    ///
+    /// XPath 3.1 section 3.8.1 leaves evaluation order free and explicitly
+    /// allows returning a result without evaluating the other operand; we
+    /// pick left-to-right short-circuiting, matching other processors, so
+    /// the common guarded idiom `$x ne 0 and 1 div $x lt 1` cannot raise an
+    /// error from the guarded operand. The conditional's test gives each
+    /// operand effective-boolean-value semantics, and the inner conditional
+    /// reduces the right operand to the boolean the whole expression returns.
+    /// The right operand's bindings are rolled into the branch, so it is not
+    /// evaluated unless the branch is taken.
+    fn logical_expr(
+        &mut self,
+        ast: &ast::BinaryExpr,
+        span: Span,
+    ) -> error::SpannedResult<Bindings> {
+        let boolean = |value: bool| -> Box<ir::ExprS> {
+            Box::new(Spanned::new(
+                ir::Expr::Atom(Spanned::new(
+                    ir::Atom::Const(ir::Const::Boolean(value)),
+                    span,
+                )),
+                span,
+            ))
+        };
+
+        let mut left_bindings = self.path_expr(&ast.left)?;
+
+        // `if (B) then true() else false()` with all of B's bindings inside
+        let mut right_bindings = self.path_expr(&ast.right)?;
+        let right_condition = right_bindings.atom();
+        let right_ebv_expr = ir::Expr::If(ir::If {
+            condition: right_condition,
+            then: boolean(true),
+            else_: boolean(false),
+        });
+        let right_ebv = Box::new(
+            right_bindings
+                .bind(self.variables.new_binding(right_ebv_expr, span))
+                .expr(),
+        );
+
+        let expr = match ast.operator {
+            ast::BinaryOperator::And => ir::Expr::If(ir::If {
+                condition: left_bindings.atom(),
+                then: right_ebv,
+                else_: boolean(false),
+            }),
+            ast::BinaryOperator::Or => ir::Expr::If(ir::If {
+                condition: left_bindings.atom(),
+                then: boolean(true),
+                else_: right_ebv,
+            }),
+            _ => unreachable!("logical_expr is only called for and/or"),
+        };
+        let binding = self.variables.new_binding(expr, span);
+        Ok(left_bindings.bind(binding))
     }
 
     fn binary_op(&mut self, operator: ast::BinaryOperator) -> ir::BinaryOperator {
@@ -805,6 +873,18 @@ mod tests {
     #[test]
     fn test_if() {
         assert_debug_snapshot!(convert_expr_single("if (1 gt 2) then 1 + 2 else 3 + 4"));
+    }
+
+    // and/or lower to nested conditionals (short-circuit); the right
+    // operand's bindings must sit inside the branch, not at the outer level
+    #[test]
+    fn test_and() {
+        assert_debug_snapshot!(convert_expr_single("1 gt 2 and 3 gt 4"));
+    }
+
+    #[test]
+    fn test_or() {
+        assert_debug_snapshot!(convert_expr_single("1 gt 2 or 3 gt 4"));
     }
 
     #[test]

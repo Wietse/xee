@@ -1,0 +1,15 @@
+---
+source: xee-xpath/tests/logical.rs
+expression: "run(\"() and (1, 2)\")"
+---
+Ok(
+    One(
+        One {
+            item: Atomic(
+                Boolean(
+                    false,
+                ),
+            ),
+        },
+    ),
+)

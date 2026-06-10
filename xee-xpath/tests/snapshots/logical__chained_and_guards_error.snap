@@ -1,0 +1,15 @@
+---
+source: xee-xpath/tests/logical.rs
+expression: "run(r#\"false() and xs:int(\"\") eq 1 and xs:int(\"\") eq 2\"#)"
+---
+Ok(
+    One(
+        One {
+            item: Atomic(
+                Boolean(
+                    false,
+                ),
+            ),
+        },
+    ),
+)

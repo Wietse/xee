@@ -1,0 +1,15 @@
+---
+source: xee-xpath/tests/logical.rs
+expression: "run(\"1 eq 1 and 2 eq 2 and 3 eq 3\")"
+---
+Ok(
+    One(
+        One {
+            item: Atomic(
+                Boolean(
+                    true,
+                ),
+            ),
+        },
+    ),
+)

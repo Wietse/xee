@@ -1,0 +1,15 @@
+---
+source: xee-xpath/tests/logical.rs
+expression: "run(\"some $i in (0, 1) satisfies ($i ne 0 and 1 div $i lt 2)\")"
+---
+Ok(
+    One(
+        One {
+            item: Atomic(
+                Boolean(
+                    true,
+                ),
+            ),
+        },
+    ),
+)

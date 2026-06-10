@@ -1,0 +1,22 @@
+---
+source: xee-xpath/tests/logical.rs
+expression: "run(\"for $i in (0, 1) return ($i ne 0 and 1 div $i lt 2)\")"
+---
+Ok(
+    Many(
+        Many {
+            items: [
+                Atomic(
+                    Boolean(
+                        false,
+                    ),
+                ),
+                Atomic(
+                    Boolean(
+                        true,
+                    ),
+                ),
+            ],
+        },
+    ),
+)

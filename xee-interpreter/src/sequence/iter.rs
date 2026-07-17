@@ -84,15 +84,9 @@ where
                     self.item_iter = None;
                 }
             }
-            // if not, move on to the next item
-            let item = self.iter.next();
-            if let Some(item) = item {
-                self.item_iter = Some(AtomizedItemIter::new(item, self.provider, self.xot));
-                continue;
-            } else {
-                // no more items, we're done
-                return None;
-            }
+            // if not, move on to the next item; no more items means we're done
+            let item = self.iter.next()?;
+            self.item_iter = Some(AtomizedItemIter::new(item, self.provider, self.xot));
         }
     }
 

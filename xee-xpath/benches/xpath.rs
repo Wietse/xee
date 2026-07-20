@@ -355,7 +355,9 @@ mod flwor {
     #[divan::bench]
     fn simple_for(bencher: Bencher) {
         let queries = Queries::default();
-        let mut q = queries.sequence("for $i in 1 to 1000 return $i + 1").unwrap();
+        let mut q = queries
+            .sequence("for $i in 1 to 1000 return $i + 1")
+            .unwrap();
         let mut documents = Documents::new();
         bencher.bench_local(move || {
             black_box(&mut q)
@@ -416,9 +418,7 @@ mod comparison {
     fn string_eq(bencher: Bencher) {
         let queries = Queries::default();
         let mut q = queries
-            .sequence(
-                "(for $i in 1 to 1000 return concat('abc', xs:string($i)))[. = 'abc500']",
-            )
+            .sequence("(for $i in 1 to 1000 return concat('abc', xs:string($i)))[. = 'abc500']")
             .unwrap();
         let mut documents = Documents::new();
         bencher.bench_local(move || {

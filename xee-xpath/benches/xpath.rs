@@ -465,6 +465,58 @@ mod atomization {
 // common pattern when one query is run repeatedly over the same instance.
 // ============================================================================
 
+// ============================================================================
+// Parsing — document construction inside the measured loop. Unlike the other
+// benches (which parse once in setup), these exercise xot's parse path, which
+// is what the xot fork's allocation/parse-time work targets.
+// ============================================================================
+
+mod parse {
+    use super::*;
+
+    #[divan::bench]
+    fn flat_1000(bencher: Bencher) {
+        let doc = flat_doc(1000);
+        bencher.bench_local(|| {
+            let mut documents = Documents::new();
+            black_box(documents.add_string_without_uri(black_box(&doc)).unwrap());
+        });
+    }
+
+    #[divan::bench]
+    fn flat_5000(bencher: Bencher) {
+        let doc = flat_doc(5000);
+        bencher.bench_local(|| {
+            let mut documents = Documents::new();
+            black_box(documents.add_string_without_uri(black_box(&doc)).unwrap());
+        });
+    }
+
+    #[divan::bench]
+    fn attributes_1000(bencher: Bencher) {
+        // 1000 <p> each with a state attribute — attribute-heavy parse.
+        let mut doc = String::from("<doc>");
+        for i in 0..1000 {
+            let state = if i % 2 == 0 { "even" } else { "odd" };
+            doc.push_str(&format!("<p state='{}'>{}</p>", state, i));
+        }
+        doc.push_str("</doc>");
+        bencher.bench_local(|| {
+            let mut documents = Documents::new();
+            black_box(documents.add_string_without_uri(black_box(&doc)).unwrap());
+        });
+    }
+
+    #[divan::bench]
+    fn deep_200(bencher: Bencher) {
+        let doc = deep_doc(200);
+        bencher.bench_local(|| {
+            let mut documents = Documents::new();
+            black_box(documents.add_string_without_uri(black_box(&doc)).unwrap());
+        });
+    }
+}
+
 mod reuse {
     use super::*;
 

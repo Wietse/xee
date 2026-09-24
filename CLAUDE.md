@@ -48,7 +48,7 @@ The `./check` script runs `cargo test` plus both conformance suites in debug mod
 
 ## Conformance test workflow
 
-The conformance suites are the primary regression safety net — over 20,000 XPath tests. The runner lives in `xee-testrunner` and is invoked from that directory:
+The conformance suites are the primary regression safety net: over 20,000 XPath tests and about 14,600 XSLT tests. Both are part of the gate. The runner lives in `xee-testrunner` and is invoked from that directory:
 
 ```
 # Regression check — runs only tests known to pass; CI also runs this (in debug mode).
@@ -86,7 +86,7 @@ CI runs conformance in **debug** mode on purpose: it catches arithmetic overflow
    - The macro `.into()`s the return value to the declared XPath type; no return-type checking.
 3. Register it in the module's `static_function_descriptions` via `wrap_xpath_fn!`.
 4. If creating a new library module, wire it up in `xee-interpreter/src/library/mod.rs`.
-5. Run `cargo test`, then the conformance suite, then `update` the filter and re-`check`.
+5. Run `cargo test`, then both conformance suites, then `update` the filters and re-`check`.
 
 ## Tests for tricky cases
 
@@ -98,7 +98,7 @@ XSLT AST snapshot tests use `insta` in `xee-xslt-ast/tests/snapshot_tests.rs`. T
 
 Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream PRs, no rebasing onto upstream, no upstream-review constraints. It forked from upstream `200b1e33` ("Fix clippy issues. (#152)"). Upstream fixes can still be cherry-picked when they are worth having.
 
-**Trunk.** `main` is the only working branch. Commit to it directly, or use short-lived topic branches for larger work. Every commit is normal fork history; don't split commits so they can be upstreamed.
+**Trunk.** `main` is the only branch. Commit to it locally and push directly: there is a single developer, so there are no topic branches or GitHub PRs. The push bypasses the `main` ruleset as admin. Put the gate evidence in the commit message, since there is no PR to carry it. Every commit is normal fork history; don't split commits so they can be upstreamed.
 
 **Consumer.** `xbrlstd-rs` depends on this fork by git SHA (`xee-xpath`, `xee-interpreter`, `xee-xpath-macros`, `xee-xpath-ast` in `../xbrlstd-rs/Cargo.toml`, all pinned to the same `rev`). To ship a change, push `main` and bump that `rev` in `xbrlstd-rs`. **Never rewrite pushed history.** A pinned SHA that becomes unreachable breaks `xbrlstd-rs` builds.
 
@@ -122,7 +122,7 @@ Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream
 
 - **Toolchain:** `rust-toolchain.toml` pins the one Rust version; rustup picks it up locally, and CI installs it with `rustup toolchain install --no-self-update`. It moves together with `xbrlstd-rs`'s pin, never ahead of it, because xee is compiled there with that toolchain.
 - **Workspace:** `[workspace.package]` holds the edition and shared metadata, and sets `publish = false`. `[workspace.dependencies]` declares every shared dependency, including the internal crates. Members inherit with `{ workspace = true }`, so an upgrade moves one line.
-- **Gate:** `.github/workflows/ci.yml` runs on pushes to `main`, on PRs, and by hand (`workflow_dispatch`): fmt, clippy `-D warnings`, build, test, and the XPath conformance `check` in debug mode. `.githooks/pre-push` runs the same gate minus conformance; change the two together. Activate the hook per clone with `git config core.hooksPath .githooks`.
+- **Gate:** `.github/workflows/ci.yml` runs on pushes to `main`, on PRs, and by hand (`workflow_dispatch`): fmt, clippy `-D warnings`, build, test, and the XPath and XSLT conformance `check`s, both in debug mode. `./check` runs the same tests and both suites locally. `.githooks/pre-push` runs the same gate minus conformance; change the two together. Activate the hook per clone with `git config core.hooksPath .githooks`.
 - **Advisories:** `.github/workflows/audit.yml` runs `cargo audit` daily and on lockfile changes. It sits beside the gate, not in it.
-- **Upgrades:** follow the rounds in `xbrlstd-rs` (the umbrella `upgrade-tooling` skill). A lockfile step here must also pass a conformance run whose per-test verdicts match those on `main`, since `check` only catches regressions in tests already known to pass.
+- **Upgrades:** follow the rounds in `xbrlstd-rs` (the umbrella `upgrade-tooling` skill). A lockfile step here must also pass a conformance run on **both** suites whose per-test verdicts match those on `main`. Run `xee-testrunner -v all` before and after, and diff the per-test verdict lines. `check` only catches regressions in tests already known to pass; the diff also shows newly passing tests (then run `update`) and failures that changed mode. The same applies to any change touching casting, serialization or parsing.
 - **Releases:** none. There is no crates.io publishing; the fork is consumed by git SHA.

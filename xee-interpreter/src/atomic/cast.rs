@@ -270,9 +270,11 @@ pub(crate) fn whitespace_collapse(s: &str) -> String {
     // XML Schema whitespace: collapse
     // after doing a replace, collapse all space characters into a single
     // space character. Any space characters at the start or end of string
-    // are then removed.
+    // are then removed. Only XML whitespace counts: split on ' ' alone, as
+    // split_ascii_whitespace would also treat form feed (U+000C) as space.
     whitespace_replace(s)
-        .split_ascii_whitespace()
+        .split(' ')
+        .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -407,5 +409,10 @@ mod tests {
     fn test_whitespace_collapse() {
         let s = "\u{20}\u{09}\u{30}\u{0D}\u{0A}\u{30}\u{A0}\u{20}\u{20}";
         assert_eq!(whitespace_collapse(s), "0 0\u{A0}");
+    }
+
+    #[test]
+    fn test_whitespace_collapse_keeps_form_feed() {
+        assert_eq!(whitespace_collapse("\u{0C} 1 \u{0C}"), "\u{0C} 1 \u{0C}");
     }
 }

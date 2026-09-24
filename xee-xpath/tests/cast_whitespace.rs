@@ -1,6 +1,7 @@
 mod common;
 
-use common::run;
+use common::{run, run_with_variables};
+use xee_xpath::{context::Variables, Item, Sequence};
 
 // Casting xs:string / xs:untypedAtomic to a type whose whiteSpace facet is
 // `collapse` applies that facet before the lexical check (F&O 3.1, 19.2).
@@ -69,5 +70,32 @@ fn test_internal_whitespace_stays_invalid() {
         ("tr ue", "xs:boolean"),
     ] {
         assert_true(&format!("not(' {value} ' castable as {target})"));
+    }
+}
+
+#[test]
+fn test_form_feed_is_not_xml_whitespace() {
+    // U+000C is not an XML character, so XPath cannot construct it
+    // (codepoints-to-string raises FOCH0001), but a host can pass it in.
+    for target in [
+        "xs:decimal",
+        "xs:integer",
+        "xs:float",
+        "xs:double",
+        "xs:boolean",
+    ] {
+        let value = if target == "xs:boolean" { "true" } else { "1" };
+        let item: Item = format!("\u{0C}{value}\u{0C}").as_str().into();
+        let sequence: Sequence = item.into();
+        let variables = Variables::from([(
+            xot::xmlname::OwnedName::new("v".to_string(), "".to_string(), "".to_string()),
+            sequence,
+        )]);
+        let expr = format!("not($v castable as {target})");
+        let result = run_with_variables(&expr, variables).unwrap();
+        assert!(
+            result.effective_boolean_value().unwrap(),
+            "{expr} should be true"
+        );
     }
 }

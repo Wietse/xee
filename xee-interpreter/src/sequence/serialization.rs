@@ -358,7 +358,10 @@ fn serialize_json_node(
             let s = serialize_sequence(&sequence, xml_parameters, xot)?;
             Ok(serialize_json_string(s, parameters))
         }
-        _ => todo!(),
+        // As for the top-level `method`, only xml and html are implemented;
+        // xhtml, text and implementation-defined QNames are SEPM0016. So is
+        // `json`, which is not in the parameter's domain and would recurse.
+        _ => Err(error::Error::SEPM0016),
     }
 }
 

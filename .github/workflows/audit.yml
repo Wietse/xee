@@ -1,0 +1,55 @@
+# RustSec advisory audit of Cargo.lock, mirroring xbrlstd-rs's audit.yml
+# (its ADR220). Beside the gate, not in it: the advisory database moves
+# independently of the code, so this workflow can turn red on a day nobody
+# committed. That red is the signal it exists for, and keeping it out of
+# ci.yml means such a day cannot redden the commit gate.
+#
+# Vulnerabilities fail the job. Informational warnings (unmaintained,
+# unsound) print without failing it. There is no ignore list: accepting an
+# advisory is a recorded decision, carried by `.cargo/audit.toml`, which
+# cargo-audit reads from the checkout root.
+
+name: Advisory audit
+
+on:
+  schedule:
+    # Daily, off the hour: an advisory published today reaches us tomorrow
+    # at the latest, with no commit needed to trigger the run.
+    - cron: "17 5 * * *"
+  push:
+    branches: [main]
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - ".cargo/audit.toml"
+      - ".github/workflows/audit.yml"
+  pull_request:
+    paths:
+      - "**/Cargo.lock"
+      - "**/Cargo.toml"
+      - ".cargo/audit.toml"
+      - ".github/workflows/audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: cargo audit (RustSec)
+    runs-on: ubuntu-latest
+    # cargo-audit runs `cargo -V` for its yanked-crate check; inside the tree
+    # rustup would resolve that to the rust-toolchain.toml pin and install it
+    # for a lockfile scan that needs no compiler. Point it at the runner's
+    # preinstalled stable instead.
+    env:
+      RUSTUP_TOOLCHAIN: stable
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit Cargo.lock
+        run: cargo-audit audit --file Cargo.lock

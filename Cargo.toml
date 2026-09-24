@@ -21,7 +21,35 @@ members = [
 # https://github.com/gfx-rs/wgpu/issues/2356#issuecomment-1005134986
 resolver = "2"
 
+# Declared once and inherited by every package (`edition.workspace = true`).
+# `publish = false`: the fork is consumed by git SHA from xbrlstd-rs, never
+# from a registry. No `rust-version`: rust-toolchain.toml is the one place a
+# Rust version is written.
+[workspace.package]
+edition = "2021"
+publish = false
+authors = ["The Xee Project Developers"]
+license = "MIT"
+repository = "https://github.com/Wietse/xee"
+homepage = "https://github.com/Wietse/xee"
+
+# Shared dependencies, internal crates included, are declared once here and
+# inherited (`<dep> = { workspace = true }`), so an upgrade moves one line.
 [workspace.dependencies]
+xee-interpreter = { path = "xee-interpreter" }
+xee-ir = { path = "xee-ir" }
+xee-name = { path = "xee-name" }
+xee-schema-type = { path = "xee-schema-type" }
+xee-xpath = { path = "xee-xpath" }
+xee-xpath-ast = { path = "xee-xpath-ast" }
+xee-xpath-compiler = { path = "xee-xpath-compiler" }
+xee-xpath-lexer = { path = "xee-xpath-lexer" }
+xee-xpath-load = { path = "xee-xpath-load" }
+xee-xpath-macros = { path = "xee-xpath-macros" }
+xee-xpath-type = { path = "xee-xpath-type" }
+xee-xslt-ast = { path = "xee-xslt-ast" }
+xee-xslt-compiler = { path = "xee-xslt-compiler" }
+
 anyhow = "1.0.97"
 xot = "0.31.2"
 ahash = "0.8.11"

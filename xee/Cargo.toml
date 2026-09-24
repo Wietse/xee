@@ -1,20 +1,20 @@
 [package]
 name = "xee"
 version = "0.1.6"
-edition = "2021"
-authors = ["The Xee Project Developers"]
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 keywords = ["xml", "xpath"]
-license = "MIT"
+license.workspace = true
 description = "Xee CLI. Swiss Army knife for XML. XPath and XSLT"
-repository = "https://github.com/Paligo/xee"
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 [dependencies]
-xee-xpath = { path = "../xee-xpath", version = "0.1.5" }
-xee-xslt-compiler = { path = "../xee-xslt-compiler", version = "0.1.6" }
-xee-interpreter = { path = "../xee-interpreter", version = "0.2.0" }
+xee-xpath = { workspace = true }
+xee-xslt-compiler = { workspace = true }
+xee-interpreter = { workspace = true }
 xot = { workspace = true }
 clap = { workspace = true, features = ["derive", "cargo"] }
 ariadne = "0.5.1"

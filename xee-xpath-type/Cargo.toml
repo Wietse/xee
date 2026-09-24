@@ -1,15 +1,15 @@
 [package]
 name = "xee-xpath-type"
 version = "0.1.4"
-edition = "2021"
-authors = ["The Xee Project Developers"]
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 keywords = ["xml", "xpath"]
-license = "MIT"
+license.workspace = true
 description = "XPath type information"
-repository = "https://github.com/Paligo/xee"
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee-xpath-type"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -17,7 +17,7 @@ homepage = "https://github.com/Paligo/xee"
 serde = ["dep:serde", "xot/serde"]
 
 [dependencies]
-xee-schema-type = { path = "../xee-schema-type", version = "0.1.4" }
-xee-name = { path = "../xee-name", version = "0.1.5" }
+xee-schema-type = { workspace = true }
+xee-name = { workspace = true }
 xot = { workspace = true }
 serde = { workspace = true, features = ["derive"], optional = true }

@@ -1,15 +1,15 @@
 [package]
 name = "xee-xpath-ast"
 version = "0.1.4"
-edition = "2021"
-authors = ["The Xee Project Developers"]
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 keywords = ["xml", "xpath"]
-license = "MIT"
+license.workspace = true
 description = "XPath parser and AST implementation"
-repository = "https://github.com/Paligo/xee"
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee-xpath-ast"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 [features]
 serde = [
@@ -24,10 +24,10 @@ serde = [
 ]
 
 [dependencies]
-xee-schema-type = { path = "../xee-schema-type", version = "0.1.4" }
-xee-name = { path = "../xee-name", version = "0.1.5" }
-xee-xpath-type = { path = "../xee-xpath-type", version = "0.1.4" }
-xee-xpath-lexer = { path = "../xee-xpath-lexer", version = "0.1.4" }
+xee-schema-type = { workspace = true }
+xee-name = { workspace = true }
+xee-xpath-type = { workspace = true }
+xee-xpath-lexer = { workspace = true }
 ahash = { workspace = true }
 chumsky = { workspace = true }
 blanket = { workspace = true }

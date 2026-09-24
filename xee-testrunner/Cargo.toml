@@ -1,22 +1,22 @@
 [package]
 name = "xee-testrunner"
 version = "0.1.6"
-edition = "2021"
-authors = ["The Xee Project Developers"]
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 keywords = ["xml", "xpath", "xslt", "testing"]
-license = "MIT"
+license.workspace = true
 description = "Conformance testing for Xee's XPath and XSLT implementations"
-repository = "https://github.com/Paligo/xee"
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee-testrunner"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 [dependencies]
-xee-xpath-load = { path = "../xee-xpath-load", version = "0.2.0" }
-xee-xpath = { path = "../xee-xpath", version = "0.1.5" }
+xee-xpath-load = { workspace = true }
+xee-xpath = { workspace = true }
 # the dependency on the xslt compiler should be replaced with xee-xslt dependency
-xee-xslt-compiler = { path = "../xee-xslt-compiler", version = "0.1.6" }
-xee-name = { path = "../xee-name", version = "0.1.5" }
+xee-xslt-compiler = { workspace = true }
+xee-name = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 ahash = { workspace = true }

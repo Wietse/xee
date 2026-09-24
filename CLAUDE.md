@@ -98,7 +98,7 @@ XSLT AST snapshot tests use `insta` in `xee-xslt-ast/tests/snapshot_tests.rs`. T
 
 Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream PRs, no rebasing onto upstream, no upstream-review constraints. It forked from upstream `200b1e33` ("Fix clippy issues. (#152)"). Upstream fixes can still be cherry-picked when they are worth having.
 
-**Trunk.** `main` is the only branch. Commit to it locally and push directly: there is a single developer, so there are no topic branches or GitHub PRs. The push bypasses the `main` ruleset as admin. Put the gate evidence in the commit message, since there is no PR to carry it. Every commit is normal fork history; don't split commits so they can be upstreamed.
+**Trunk.** `main` is the only branch that is pushed. Commit to it locally and push directly: there is a single developer, so there are no pushed topic branches or GitHub PRs. Larger work may run on a short-lived **local** branch in its own worktree. That branch is never pushed and never rebased; after review, `main` is fast-forwarded to it. If you are working in such a worktree, commit on its branch, not on `main`. The push bypasses the `main` ruleset as admin. Put the gate evidence in the commit message, since there is no PR to carry it. Every commit is normal fork history; don't split commits so they can be upstreamed.
 
 **Consumer.** `xbrlstd-rs` depends on this fork by git SHA (`xee-xpath`, `xee-interpreter`, `xee-xpath-macros`, `xee-xpath-ast` in `../xbrlstd-rs/Cargo.toml`, all pinned to the same `rev`). To ship a change, push `main` and bump that `rev` in `xbrlstd-rs`. **Never rewrite pushed history.** A pinned SHA that becomes unreachable breaks `xbrlstd-rs` builds.
 

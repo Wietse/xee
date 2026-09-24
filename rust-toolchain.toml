@@ -1,0 +1,12 @@
+# The one place the Rust version is written. rustup auto-selects it for every
+# cargo/rustc/clippy/rustfmt invocation in the repo (the pre-push hook needs no
+# toolchain flag), and CI installs it from here instead of floating on
+# `stable`, so a new release cannot redden CI on a lint nobody ran locally.
+#
+# Moves together with xbrlstd-rs's pin (its ADR187), never ahead of it: xee is
+# compiled inside xbrlstd-rs with that repo's toolchain, so code here must
+# build on it. A bump is a deliberate commit, with the lint fixes it demands.
+[toolchain]
+channel = "1.97.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

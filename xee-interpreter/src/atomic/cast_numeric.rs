@@ -54,7 +54,11 @@ impl atomic::Atomic {
     }
 
     pub(crate) fn parse_decimal(s: &str) -> error::Result<Decimal> {
-        if s.contains('_') {
+        // rust_decimal's FromStr is more permissive than the xs:decimal
+        // lexical space: it accepts `_` separators and, since 1.43, falls
+        // back to (lossy) scientific notation for input containing `e`/`E`.
+        // So we check the lexical form ourselves before handing it over.
+        if !is_decimal_lexical(s) {
             return Err(error::Error::FORG0001);
         }
         s.parse::<Decimal>().map_err(|_| error::Error::FORG0001)
@@ -487,6 +491,14 @@ where
     Ok(i)
 }
 
+// The xs:decimal lexical space: `(\+|-)?([0-9]+(\.[0-9]*)?|\.[0-9]+)`
+fn is_decimal_lexical(s: &str) -> bool {
+    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
+    let (int, frac) = s.split_once('.').unwrap_or((s, ""));
+    let all_digits = |part: &str| part.bytes().all(|b| b.is_ascii_digit());
+    !(int.is_empty() && frac.is_empty()) && all_digits(int) && all_digits(frac)
+}
+
 impl FromStr for Parsed<Decimal> {
     type Err = error::Error;
 
@@ -604,6 +616,29 @@ mod tests {
             atomic::Atomic::parse_atomic::<Decimal>("1_000.0"),
             Err(error::Error::FORG0001)
         );
+    }
+
+    #[test]
+    fn test_parse_decimal_no_exponent() {
+        for s in ["1e-5", "-0.0E0", "1E3", "1.5e2"] {
+            assert_eq!(
+                atomic::Atomic::parse_atomic::<Decimal>(s),
+                Err(error::Error::FORG0001),
+                "{s}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_decimal_lexical() {
+        for s in ["1", "-1", "+1", "1.", ".5", "-.5", "+0.0", "007.100"] {
+            assert!(is_decimal_lexical(s), "{s} should be accepted");
+        }
+        for s in [
+            "", ".", "+", "-", "+.", "1.2.3", "1e5", "1_000", "--1", " 1", "INF", "NaN",
+        ] {
+            assert!(!is_decimal_lexical(s), "{s} should be rejected");
+        }
     }
 
     #[test]

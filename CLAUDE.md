@@ -114,7 +114,7 @@ Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream
 
 **Design boundary.** Keep XBRL semantics in `xbrlstd-rs` and generic hooks in xee (registry, providers, dialects). This is a design preference, not an upstream constraint. XBRL-specific code may live here when that is clearly the better home. Items still marked `pub #[doc(hidden)]` only for macro support can become proper public API.
 
-**Legacy branches.** The old upstream-oriented stack (`macro-hardening`, `macro-hardening-2`, `extension-functions`, `xbrl-dialect`, `xbrl-typed-nodes`, `short-circuit-logical`) is fully contained in `main` and awaiting deletion. `external-function-registry` is an abandoned design branch. `private-plan` holds the archived registry design notes (`extension-functions-plan.md`, reference only).
+**Legacy branches.** The old upstream-oriented branch stack was merged into `main` and deleted on 2026-09-24. The one exception is the remote `macro-hardening` branch, which stays because it is the source branch of the still-open upstream PR [Paligo/xee#151](https://github.com/Paligo/xee/pull/151); deleting it would close that PR. Its commits are already in `main`.
 
 **License.** MIT. Keep `LICENSE-MIT` and `COPYRIGHT` intact.
 

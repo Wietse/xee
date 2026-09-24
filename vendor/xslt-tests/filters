@@ -56,7 +56,6 @@ accessor-004
 accessor-005
 accessor-006
 accessor-008
-accessor-010
 accessor-013
 accessor-014
 accessor-015
@@ -65,7 +64,6 @@ accessor-020
 accessor-021
 accessor-022
 accessor-024
-accessor-025
 accessor-026
 accessor-027
 accessor-028
@@ -980,7 +978,6 @@ base-uri-052
 base-uri-053
 = boolean
 boolean-002
-boolean-032
 boolean-047
 boolean-048
 boolean-066
@@ -991,7 +988,6 @@ boolean-072
 boolean-081
 boolean-082
 boolean-083
-boolean-084
 boolean-095
 boolean-096
 boolean-100
@@ -4080,7 +4076,6 @@ math-2503
 math-2504
 math-2506
 math-2507
-math-2508
 math-2509
 math-2601
 math-2602
@@ -10420,7 +10415,6 @@ strip-type-annotations-017
 strip-type-annotations-018
 strip-type-annotations-020
 strip-type-annotations-021
-strip-type-annotations-022
 strip-type-annotations-023
 strip-type-annotations-024
 strip-type-annotations-025

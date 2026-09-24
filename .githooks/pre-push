@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+#
+# Pre-push hook: enforce CI-equivalent checks before pushing.
+#
+# CI runs fmt + clippy + build + test + conformance. This hook runs the first
+# three (build is implied by clippy/test). Conformance runs only on CI -- it
+# is the slow step (~minutes for the debug run) and skipping it keeps the
+# local loop fast. Bypass anything with `git push --no-verify`.
+#
+# Mirrors .github/workflows/ci.yml minus conformance; change them together.
+# Runs the toolchain rust-toolchain.toml pins (rustup auto-selects it).
+# Activate per clone: `git config core.hooksPath .githooks`.
+
+set -uo pipefail
+
+# Stdin gives one line per ref being pushed:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+# A delete has local_sha = 40 zeros and there is nothing to check.
+any_real_push=0
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+    if [ -n "${local_sha:-}" ] && [ "$local_sha" != "$zero" ]; then
+        any_real_push=1
+    fi
+done
+if [ "$any_real_push" -eq 0 ]; then
+    exit 0
+fi
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+run_step() {
+    local label=$1
+    shift
+    printf '\n=== pre-push: %s ===\n' "$label"
+    if ! "$@"; then
+        printf '\npre-push: %s FAILED -- push aborted.\n' "$label" >&2
+        printf 'pre-push: bypass with `git push --no-verify` if you really mean it.\n' >&2
+        exit 1
+    fi
+}
+
+run_step "cargo fmt --check --all"  cargo fmt --check --all
+run_step "cargo clippy -D warnings" cargo clippy --all-targets --all-features -- -D warnings
+run_step "cargo test --workspace"   cargo test --workspace
+
+printf '\npre-push: all checks passed\n'

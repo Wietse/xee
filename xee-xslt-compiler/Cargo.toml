@@ -1,27 +1,27 @@
 [package]
 name = "xee-xslt-compiler"
 version = "0.1.6"
-edition = "2021"
-authors = ["The Xee Project Developers"]
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 keywords = ["xml", "xslt"]
-license = "MIT"
+license.workspace = true
 description = "XSLT 3.0 compiler to Xee IR"
-repository = "https://github.com/Paligo/xee"
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee-xslt"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 [features]
 serde = ["xee-xslt-ast/serde", "xee-interpreter/serde"]
 
 [dependencies]
-xee-name = { path = "../xee-name", version = "0.1.5" }
-xee-xpath-ast = { path = "../xee-xpath-ast", version = "0.1.4" }
-xee-xpath-compiler = { path = "../xee-xpath-compiler", version = "0.1.5" }
-xee-xslt-ast = { path = "../xee-xslt-ast", version = "0.1.6" }
-xee-schema-type = { path = "../xee-schema-type", version = "0.1.4" }
-xee-interpreter = { path = "../xee-interpreter", version = "0.2.0" }
-xee-ir = { path = "../xee-ir", version = "0.1.5" }
+xee-name = { workspace = true }
+xee-xpath-ast = { workspace = true }
+xee-xpath-compiler = { workspace = true }
+xee-xslt-ast = { workspace = true }
+xee-schema-type = { workspace = true }
+xee-interpreter = { workspace = true }
+xee-ir = { workspace = true }
 ahash = { workspace = true }
 iri-string = { workspace = true }
 ordered-float = { workspace = true }

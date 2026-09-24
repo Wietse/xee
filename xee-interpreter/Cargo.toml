@@ -1,16 +1,16 @@
 [package]
 name = "xee-interpreter"
 version = "0.2.0"
-edition = "2021"
-authors = ["The Xee Project Developers"]
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 keywords = ["xml", "xpath"]
 categories = ["text-processing", "compilers"]
-license = "MIT"
+license.workspace = true
 description = "Interpreter for XPath and XSLT"
-repository = "https://github.com/Paligo/xee"
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee-interpreter"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 [features]
 serde = [
@@ -25,11 +25,11 @@ serde = [
 ]
 
 [dependencies]
-xee-xpath-ast = { path = "../xee-xpath-ast", version = "0.1.4" }
-xee-xpath-macros = { path = "../xee-xpath-macros", version = "0.1.4" }
-xee-schema-type = { path = "../xee-schema-type", version = "0.1.4" }
-xee-xpath-type = { path = "../xee-xpath-type", version = "0.1.4" }
-xee-name = { path = "../xee-name", version = "0.1.5" }
+xee-xpath-ast = { workspace = true }
+xee-xpath-macros = { workspace = true }
+xee-schema-type = { workspace = true }
+xee-xpath-type = { workspace = true }
+xee-name = { workspace = true }
 ahash = { workspace = true }
 arrayvec = "0.7.6"
 chumsky = { workspace = true }

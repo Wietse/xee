@@ -1,26 +1,26 @@
 [package]
 name = "xee-xpath"
 version = "0.1.5"
-edition = "2021"
-authors = ["The Xee Project Developers"]
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 keywords = ["xml", "xpath"]
 categories = ["text-processing", "compilers"]
-license = "MIT"
+license.workspace = true
 description = "XPath 3.1 library API"
-repository = "https://github.com/Paligo/xee"
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee-xpath"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 [features]
 serde = ["xee-xpath-ast/serde", "xee-interpreter/serde"]
 
 [dependencies]
-xee-xpath-compiler = { path = "../xee-xpath-compiler", version = "0.1.5" }
-xee-xpath-ast = { path = "../xee-xpath-ast", version = "0.1.4" }
-xee-schema-type = { path = "../xee-schema-type", version = "0.1.4" }
-xee-interpreter = { path = "../xee-interpreter", version = "0.2.0" }
-xee-ir = { path = "../xee-ir", version = "0.1.5" }
+xee-xpath-compiler = { workspace = true }
+xee-xpath-ast = { workspace = true }
+xee-schema-type = { workspace = true }
+xee-interpreter = { workspace = true }
+xee-ir = { workspace = true }
 chrono = { workspace = true }
 ahash = { workspace = true }
 ordered-float = { workspace = true }
@@ -34,7 +34,7 @@ iri-string = { workspace = true }
 insta = { workspace = true, features = ["yaml", "glob"] }
 rust_decimal_macros = { workspace = true }
 divan = "0.1.17"
-xee-xpath-macros = { path = "../xee-xpath-macros", version = "0.1.4" }
+xee-xpath-macros = { workspace = true }
 
 [[bench]]
 name = "xpath"

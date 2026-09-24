@@ -2,21 +2,21 @@
 name = "xee-xpath-macros"
 version = "0.1.4"
 description = "Proc macros for xee-interpreter function library"
-authors = ["The Xee Project Developers"]
-edition = "2021"
+authors.workspace = true
+edition.workspace = true
+publish.workspace = true
 keywords = ["xml", "xpath"]
-license = "MIT"
-repository = "https://github.com/Paligo/xee"
+license.workspace = true
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee-xpath-macros"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 [lib]
 proc-macro = true
 
 [dependencies]
-xee-xpath-ast = { path = "../xee-xpath-ast", version = "0.1.4" }
-xee-schema-type = { path = "../xee-schema-type", version = "0.1.4" }
+xee-xpath-ast = { workspace = true }
+xee-schema-type = { workspace = true }
 proc-macro2 = { version = "1", default-features = false }
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }

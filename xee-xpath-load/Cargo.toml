@@ -1,20 +1,20 @@
 [package]
 name = "xee-xpath-load"
 version = "0.2.0"
-edition = "2021"
-authors = ["The Xee Project Developers"]
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
 keywords = ["xml", "xpath"]
-license = "MIT"
+license.workspace = true
 description = "Load XML into structs using XPath"
-repository = "https://github.com/Paligo/xee"
+repository.workspace = true
 readme = "README.md"
-documentation = "https://docs.rs/xee-xpath-load"
-homepage = "https://github.com/Paligo/xee"
+homepage.workspace = true
 
 
 [dependencies]
-xee-xpath-compiler = { path = "../xee-xpath-compiler", version = "0.1.5" }
-xee-xpath = { path = "../xee-xpath", version = "0.1.5" }
+xee-xpath-compiler = { workspace = true }
+xee-xpath = { workspace = true }
 thiserror = { workspace = true }
 xot = { workspace = true }
 ibig = { workspace = true }

@@ -113,6 +113,14 @@ impl SerializationParameters {
 
         let method = c.qname_or_string("method", QNameOrString::String("xml".to_string()))?;
 
+        // Serialization 3.1 §3: a no-namespace value outside these names is
+        // invalid (SEPM0016) whether or not the parameter ends up being used.
+        check_method_domain(
+            &method,
+            &["xml", "xhtml", "html", "text", "json", "adaptive"],
+        )?;
+        check_method_domain(&json_node_output_method, &["xml", "xhtml", "html", "text"])?;
+
         let normalization_form = c.option("normalization-form", Xs::String)?;
 
         let omit_xml_declaration =
@@ -195,15 +203,27 @@ pub(crate) fn serialize_sequence(
     parameters: SerializationParameters,
     xot: &mut Xot,
 ) -> error::Result<String> {
-    if let Some(local_name) = parameters.method.local_name() {
-        match local_name {
-            "xml" => serialize_xml(arg, parameters, xot),
-            "html" => serialize_html(arg, parameters, xot),
-            "json" => serialize_json(arg, parameters, xot),
-            _ => Err(error::Error::SEPM0016),
-        }
-    } else {
-        Err(error::Error::SEPM0016)
+    match parameters.method.local_name() {
+        Some("xml") => serialize_xml(arg, parameters, xot),
+        Some("html") => serialize_html(arg, parameters, xot),
+        Some("text") => serialize_text(arg, parameters, xot),
+        Some("json") => serialize_json(arg, parameters, xot),
+        Some(method @ ("xhtml" | "adaptive")) => Err(error::Error::Unsupported(format!(
+            "the {method} output method is not supported"
+        ))),
+        // a QName in a namespace names an implementation-defined method;
+        // Xee defines none
+        None => Err(error::Error::Unsupported(
+            "implementation-defined output methods are not supported".to_string(),
+        )),
+        Some(_) => Err(error::Error::SEPM0016),
+    }
+}
+
+fn check_method_domain(value: &QNameOrString, names: &[&str]) -> error::Result<()> {
+    match value.local_name() {
+        Some(name) if !names.contains(&name) => Err(error::Error::SEPM0016),
+        _ => Ok(()),
     }
 }
 
@@ -259,6 +279,17 @@ fn serialize_html(
         cdata_section_elements,
     };
     Ok(html5.serialize_string(output_parameters, node)?)
+}
+
+// Serialization 3.1 §8: the string value of the document node that sequence
+// normalization produces, without escaping.
+fn serialize_text(
+    arg: &Sequence,
+    parameters: SerializationParameters,
+    xot: &mut Xot,
+) -> Result<String, error::Error> {
+    let node = arg.normalize(&parameters.item_separator, xot)?;
+    Ok(xot.string_value(node))
 }
 
 fn serialize_json(
@@ -349,20 +380,16 @@ fn serialize_json_node(
     parameters: &SerializationParameters,
     xot: &mut Xot,
 ) -> Result<json::JsonValue, error::Error> {
-    match parameters.json_node_output_method.local_name() {
-        Some("xml") | Some("html") => {
-            let xml_parameters = SerializationParameters::xml_in_json_serialization(
-                &parameters.json_node_output_method,
-            );
-            let sequence: Sequence = vec![node].into();
-            let s = serialize_sequence(&sequence, xml_parameters, xot)?;
-            Ok(serialize_json_string(s, parameters))
-        }
-        // As for the top-level `method`, only xml and html are implemented;
-        // xhtml, text and implementation-defined QNames are SEPM0016. So is
-        // `json`, which is not in the parameter's domain and would recurse.
-        _ => Err(error::Error::SEPM0016),
+    // from_map already rejects values outside the parameter's domain; this
+    // guards hand-built parameters, where `json` would recurse.
+    if let Some("json" | "adaptive") = parameters.json_node_output_method.local_name() {
+        return Err(error::Error::SEPM0016);
     }
+    let node_parameters =
+        SerializationParameters::xml_in_json_serialization(&parameters.json_node_output_method);
+    let sequence: Sequence = vec![node].into();
+    let s = serialize_sequence(&sequence, node_parameters, xot)?;
+    Ok(serialize_json_string(s, parameters))
 }
 
 fn serialize_json_function(
@@ -499,10 +526,10 @@ mod tests {
 
     #[test]
     fn test_qname_or_string_string() {
-        let json: atomic::Atomic = "json".to_string().into();
+        let text: atomic::Atomic = "text".to_string().into();
         let map = Map::new(vec![(
             "json-node-output-method".to_string().into(),
-            sequence::Sequence::from(vec![json]),
+            sequence::Sequence::from(vec![text]),
         )])
         .unwrap();
         let static_context = context::StaticContext::default();
@@ -510,17 +537,17 @@ mod tests {
         let params = SerializationParameters::from_map(map, &static_context, &xot).unwrap();
         assert_eq!(
             params.json_node_output_method,
-            QNameOrString::String("json".to_string())
+            QNameOrString::String("text".to_string())
         );
     }
 
     #[test]
     fn test_qname_or_string_qname() {
-        let owned_name = OwnedName::new("json".to_string(), "".to_string(), "".to_string());
-        let json: atomic::Atomic = owned_name.clone().into();
+        let owned_name = OwnedName::new("text".to_string(), "".to_string(), "".to_string());
+        let text: atomic::Atomic = owned_name.clone().into();
         let map = Map::new(vec![(
             "json-node-output-method".to_string().into(),
-            sequence::Sequence::from(vec![json]),
+            sequence::Sequence::from(vec![text]),
         )])
         .unwrap();
         let static_context = context::StaticContext::default();

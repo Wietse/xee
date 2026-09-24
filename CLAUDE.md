@@ -118,6 +118,11 @@ Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream
 
 **License.** MIT. Keep `LICENSE-MIT` and `COPYRIGHT` intact.
 
-## CI
+## CI and tooling
 
-`.github/workflows/ci.yml` runs on pushes to `main` and on PRs: fmt, clippy `-D warnings`, build, test, and the XPath conformance `check` in debug mode. There is no release or crates.io publishing; the fork is consumed by git SHA.
+- **Toolchain:** `rust-toolchain.toml` pins the one Rust version; rustup picks it up locally, and CI installs it with `rustup toolchain install --no-self-update`. It moves together with `xbrlstd-rs`'s pin, never ahead of it, because xee is compiled there with that toolchain.
+- **Workspace:** `[workspace.package]` holds the edition and shared metadata, and sets `publish = false`. `[workspace.dependencies]` declares every shared dependency, including the internal crates. Members inherit with `{ workspace = true }`, so an upgrade moves one line.
+- **Gate:** `.github/workflows/ci.yml` runs on pushes to `main`, on PRs, and by hand (`workflow_dispatch`): fmt, clippy `-D warnings`, build, test, and the XPath conformance `check` in debug mode. `.githooks/pre-push` runs the same gate minus conformance; change the two together. Activate the hook per clone with `git config core.hooksPath .githooks`.
+- **Advisories:** `.github/workflows/audit.yml` runs `cargo audit` daily and on lockfile changes. It sits beside the gate, not in it.
+- **Upgrades:** follow the rounds in `xbrlstd-rs` (the umbrella `upgrade-tooling` skill). A lockfile step here must also pass a conformance run whose per-test verdicts match those on `main`, since `check` only catches regressions in tests already known to pass.
+- **Releases:** none. There is no crates.io publishing; the fork is consumed by git SHA.

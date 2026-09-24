@@ -1766,13 +1766,7 @@ preceding-sibling-1
 = prod-BaseURIDecl
 = prod-BoundarySpaceDecl
 = prod-CastExpr
-K-SeqExprCast-1212
 K-SeqExprCast-1414
-K-SeqExprCast-440
-K-SeqExprCast-536
-K-SeqExprCast-588
-K2-SeqExprCast-221
-K2-SeqExprCast-223
 K2-SeqExprCast-480
 = prod-CastExpr.derived
 cbcl-cast-byte-001

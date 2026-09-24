@@ -185,7 +185,7 @@ impl atomic::Atomic {
         match self {
             atomic::Atomic::String(atomic::StringType::AnyURI, _) => Err(error::Error::XPTY0004),
             atomic::Atomic::Untyped(s) | atomic::Atomic::String(_, s) => {
-                Self::parse_atomic::<bool>(&s)
+                Self::parse_atomic::<bool>(&whitespace_collapse(&s))
             }
             atomic::Atomic::Float(f) => Ok(atomic::Atomic::Boolean(!(f.is_nan() || f.is_zero()))),
             atomic::Atomic::Decimal(d) => Ok(atomic::Atomic::Boolean(!d.is_zero())),

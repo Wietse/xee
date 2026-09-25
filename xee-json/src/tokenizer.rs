@@ -3,6 +3,7 @@
 use std::iter::FusedIterator;
 
 use crate::error::{Error, ErrorKind};
+use crate::number;
 use crate::string::{Escaped, Str};
 
 /// The default maximum nesting depth: 512 open arrays and objects.
@@ -407,44 +408,24 @@ impl<'a> Tokenizer<'a> {
     /// Reads the number that starts at the current byte (RFC 8259 §6). The
     /// number ends at the first byte that cannot continue it; what follows
     /// is checked by the next state.
+    ///
+    /// The grammar is [`number::scan`], which the writer shares. An error is
+    /// at the first byte that does not fit: [`ErrorKind::InvalidNumber`]
+    /// (a leading zero such as `01` or `-00` is one at its second digit), or
+    /// [`ErrorKind::UnexpectedEof`] when the text ends where a digit is
+    /// required.
     fn number(&mut self) -> Result<&'a str, Error> {
         let start = self.pos;
-        if self.peek() == Some(b'-') {
-            self.pos += 1;
-        }
-        match self.peek() {
-            Some(b'0') => {
-                self.pos += 1;
-                if let Some(b'0'..=b'9') = self.peek() {
-                    // A leading zero: `01`, `-00`.
-                    return Err(self.error(ErrorKind::InvalidNumber));
-                }
+        match number::scan(self.input.as_bytes(), start) {
+            Ok(end) => {
+                self.pos = end;
+                Ok(self.text(start, end))
             }
-            _ => self.digits()?,
-        }
-        if self.peek() == Some(b'.') {
-            self.pos += 1;
-            self.digits()?;
-        }
-        if let Some(b'e' | b'E') = self.peek() {
-            self.pos += 1;
-            if let Some(b'+' | b'-') = self.peek() {
-                self.pos += 1;
+            Err(offset) => {
+                self.pos = offset;
+                Err(self.error_here(ErrorKind::InvalidNumber))
             }
-            self.digits()?;
         }
-        Ok(self.text(start, self.pos))
-    }
-
-    /// One or more digits.
-    fn digits(&mut self) -> Result<(), Error> {
-        if !matches!(self.peek(), Some(b'0'..=b'9')) {
-            return Err(self.error_here(ErrorKind::InvalidNumber));
-        }
-        while let Some(b'0'..=b'9') = self.peek() {
-            self.pos += 1;
-        }
-        Ok(())
     }
 
     /// Reads `literal`, whose first byte is the current byte.

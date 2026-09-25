@@ -1,7 +1,9 @@
 #![warn(missing_docs)]
 #![forbid(unsafe_code)]
 
-//! A strict JSON pull tokenizer.
+//! A strict JSON pull tokenizer and a JSON writer.
+//!
+//! # Tokenizer
 //!
 //! [`Tokenizer`] reads a JSON text ([RFC 8259] §2) from a `&str` and yields
 //! [`Event`]s in document order. It is an [`Iterator`] of
@@ -59,12 +61,42 @@
 //! );
 //! ```
 //!
+//! # Writer
+//!
+//! [`Writer`] produces a JSON text from calls made in document order, one
+//! per token, and returns it as a `String`:
+//!
+//! - **Ordered members.** Keys are written in the order given, and a
+//!   repeated key is written again: nothing is merged.
+//! - **Number text from the caller**, checked against the RFC 8259 §6
+//!   grammar and written as given.
+//! - **Escaping by a named profile**, [`EscapeProfile::Serialization`]: the
+//!   JSON output method of Serialization 3.1 §9, which escapes the solidus
+//!   and U+007F to U+009F as well as what RFC 8259 §7 requires, with
+//!   upper-case hexadecimal digits.
+//! - **An "is encodable" predicate** ([`Writer::with_encodable`]): a string
+//!   character the output encoding cannot represent is escaped (outside
+//!   the Basic Multilingual Plane, as a surrogate pair of escapes).
+//! - **Verbatim text** ([`Writer::string_verbatim`]) inside a string, for
+//!   character-map output, which is written unescaped.
+//! - **[`Layout::Compact`]** (no whitespace outside strings) or
+//!   **[`Layout::Indented`]**.
+//! - **Misuse is refused** with a [`WriteError`] and writes nothing, so the
+//!   finished text is always one valid JSON text, verbatim text aside.
+//!
+//! What the tokenizer reads back from the writer's output (verbatim text
+//! aside) is the same sequence of events, with every string decoding to the
+//! text that was written.
+//!
 //! [RFC 8259]: https://www.rfc-editor.org/rfc/rfc8259
 
 mod error;
+mod number;
 mod string;
 mod tokenizer;
+mod writer;
 
 pub use error::{Error, ErrorKind};
 pub use string::{Decoded, Escaped, Segment, Segments, Str};
 pub use tokenizer::{BomPolicy, Event, Options, Tokenizer, DEFAULT_MAX_DEPTH};
+pub use writer::{EscapeProfile, Layout, WriteError, Writer};

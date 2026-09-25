@@ -264,3 +264,28 @@ pub fn strings<'a, 'e>(events: &'e [Event<'a>]) -> impl Iterator<Item = Str<'a>>
         _ => None,
     })
 }
+
+/// The number of RFC 8259 §2 whitespace characters outside string
+/// contents in a JSON text. The text must be valid JSON: inside a string,
+/// a backslash is taken to start a two-character or `\u` escape.
+pub fn whitespace_outside_strings(text: &str) -> usize {
+    let mut count = 0;
+    let mut in_string = false;
+    let mut after_backslash = false;
+    for c in text.chars() {
+        if in_string {
+            if after_backslash {
+                after_backslash = false;
+            } else if c == '\\' {
+                after_backslash = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else if c == '"' {
+            in_string = true;
+        } else if matches!(c, ' ' | '\t' | '\n' | '\r') {
+            count += 1;
+        }
+    }
+    count
+}

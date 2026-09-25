@@ -86,7 +86,8 @@
 //!
 //! What the tokenizer reads back from the writer's output (verbatim text
 //! aside) is the same sequence of events, with every string decoding to the
-//! text that was written.
+//! text that was written, as long as the nesting stays within the
+//! tokenizer's [`Options::max_depth`]: the writer has no depth limit.
 //!
 //! [RFC 8259]: https://www.rfc-editor.org/rfc/rfc8259
 

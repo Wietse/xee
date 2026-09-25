@@ -735,3 +735,72 @@ fn getters_read_back_the_construction() {
     assert_eq!(Layout::default(), Layout::Compact);
     assert_eq!(EscapeProfile::default(), EscapeProfile::Serialization);
 }
+
+// `with_encodable` mid-document: the output so far, the open containers,
+// the pending key, the open string, the completion state and the layout
+// all carry over, and a later call replaces an earlier predicate.
+
+#[test]
+fn with_encodable_mid_document_keeps_the_open_containers_and_key() {
+    let e_acute = char::from_u32(0xE9).unwrap().to_string();
+    let mut writer = indented();
+    writer.start_object().unwrap();
+    writer.key("a").unwrap();
+    let mut writer = writer.with_encodable(|c| c.is_ascii());
+    writer.start_array().unwrap();
+    writer.string(&e_acute).unwrap();
+    writer.end_array().unwrap();
+    writer.key(&e_acute).unwrap();
+    writer.number("1").unwrap();
+    writer.end_object().unwrap();
+    let expected = [
+        "{".to_string(),
+        r#"  "a": ["#.to_string(),
+        format!("    {}", quoted(&esc("00E9"))),
+        "  ],".to_string(),
+        format!("  {}: 1", quoted(&esc("00E9"))),
+        "}".to_string(),
+    ]
+    .join("\n");
+    assert_eq!(writer.finish().unwrap(), expected);
+}
+
+#[test]
+fn with_encodable_chained_inside_an_open_string_replaces_the_predicate() {
+    let e_acute = char::from_u32(0xE9).unwrap().to_string();
+    let mut writer = compact().with_encodable(|c| c.is_ascii());
+    writer.begin_string().unwrap();
+    writer.string_text(&e_acute).unwrap();
+    let mut writer = writer.with_encodable(|_| true);
+    writer.string_text(&e_acute).unwrap();
+    writer.end_string().unwrap();
+    assert_eq!(
+        writer.finish().unwrap(),
+        quoted(&format!("{}{e_acute}", esc("00E9")))
+    );
+}
+
+#[test]
+fn with_encodable_after_the_value_keeps_it_complete() {
+    let mut writer = compact();
+    writer.number("1").unwrap();
+    let mut writer = writer.with_encodable(|c| c.is_ascii());
+    assert_eq!(writer.null(), Err(WriteError::SecondTopLevelValue));
+    assert_eq!(writer.finish().unwrap(), "1");
+}
+
+/// A positive control for `common::whitespace_outside_strings`: spaces,
+/// a tab, a newline and a carriage return outside strings are counted,
+/// the spaces inside a string with an escaped quotation mark are not.
+#[test]
+fn whitespace_outside_strings_counts_only_outside_strings() {
+    let text = format!(
+        "{{ \"a {bs}\" b\" :{tab}[1,{nl}2]{cr}}}",
+        bs = '\\',
+        tab = '\t',
+        nl = '\n',
+        cr = '\r'
+    );
+    assert!(accept(&text).len() > 1, "{text:?} is valid JSON");
+    assert_eq!(common::whitespace_outside_strings(&text), 5, "{text:?}");
+}

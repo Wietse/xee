@@ -1,5 +1,9 @@
-use ahash::HashMap;
+use std::borrow::Cow;
+
+use ahash::{HashMap, HashSet};
+use icu::normalizer::{ComposingNormalizer, DecomposingNormalizer};
 use rust_decimal::Decimal;
+use xee_json::{EscapeProfile, Layout, WriteError, Writer};
 use xot::{xmlname::OwnedName, Xot};
 
 use xee_schema_type::Xs;
@@ -132,7 +136,9 @@ impl SerializationParameters {
 
         let undeclare_prefixes = c.option_with_default("undeclare-prefixes", Xs::Boolean, false)?;
 
-        // TODO: use-character-maps
+        // TODO: use-character-maps (Serialization 3.1 §11) is not read, so
+        // no output method applies a character map. The xml and html
+        // methods write through xot, which has no hook for one.
 
         let version = c.option_with_default("version", Xs::String, "1.0".to_string())?;
 
@@ -273,6 +279,10 @@ fn serialize_html(
     // TODO: no check yet for html version rejecting versions that aren't 5
     let cdata_section_elements = xot_names(&parameters.cdata_section_elements, xot);
     let indentation = xot_indentation(&parameters, xot);
+    // xot writes `<!DOCTYPE html>` for every node. Serialization 3.1 §7.4.6
+    // asks for it only when the first element is named html (in any case)
+    // with nothing but whitespace text before it, and the doctype
+    // parameters are absent.
     let html5 = xot.html5();
     let output_parameters = xot::output::html5::Parameters {
         indentation,
@@ -292,144 +302,225 @@ fn serialize_text(
     Ok(xot.string_value(node))
 }
 
+// Serialization 3.1 §9, the JSON output method, written through the
+// xee-json writer with the §9 escaping profile.
+//
+// - Numbers are written as their canonical xs:string form (F&O 3.1
+//   §19.1.2), which keeps xs:integer and xs:decimal values exact; §9 allows
+//   any RFC 8259 form.
+// - Map members are written in the map's order. Keys with the same string
+//   value are SERE0022 unless allow-duplicate-names is true, in which case
+//   both members are written.
+// - `indent` selects the writer's indented layout.
+// - `encoding` gives the writer its "is encodable" predicate (§9.1.3); an
+//   encoding Xee does not know is SESU0007. Since every character can be
+//   escaped, SERE0008 cannot arise.
+// - `normalization-form` is applied to each string, keys and node output
+//   included, before it is escaped (§9, §9.1.9).
+// - Not implemented: character maps (§11). `use-character-maps` is not read
+//   from the parameter map (see `from_map`); the writer's verbatim string
+//   parts are there for it.
+// - `byte-order-mark` does not apply: fn:serialize returns a string, not
+//   octets.
+//
+// The serializer recurses once per nested array or map. The value is an
+// XDM value the program built, and its nesting is that of the program's
+// data; the writer itself keeps no recursion.
 fn serialize_json(
     arg: &Sequence,
     parameters: SerializationParameters,
     xot: &mut Xot,
 ) -> Result<String, error::Error> {
-    let r = serialize_json_sequence(arg, &parameters, xot)?;
-    Ok(r.dump())
+    let encodable = json_encodable(&parameters.encoding)?;
+    let normalization = Normalization::new(parameters.normalization_form.as_deref())?;
+    let layout = if parameters.indent {
+        Layout::Indented
+    } else {
+        Layout::Compact
+    };
+    let writer = Writer::new(layout, EscapeProfile::Serialization);
+    let writer = match encodable {
+        Some(encodable) => writer.with_encodable(encodable),
+        None => writer,
+    };
+    let mut serializer = JsonSerializer {
+        writer,
+        parameters: &parameters,
+        normalization,
+    };
+    serializer.sequence(arg, xot)?;
+    serializer.writer.finish().map_err(write_error)
 }
 
-fn serialize_json_sequence(
-    arg: &Sequence,
-    parameters: &SerializationParameters,
-    xot: &mut Xot,
-) -> Result<json::JsonValue, error::Error> {
-    match arg {
-        Sequence::One(item) => serialize_json_item(item.item(), parameters, xot),
-        Sequence::Empty(_) => Ok(json::JsonValue::Null),
-        Sequence::Many(_) | Sequence::Range(_) => Err(error::Error::SERE0023),
+/// Whether an output encoding can represent a character.
+type Encodable = fn(char) -> bool;
+
+/// The "is encodable" predicate for an output encoding (Serialization 3.1
+/// §9.1.3), or `None` when the encoding can represent every character.
+/// UTF-8 and UTF-16 are required; UTF-32, US-ASCII and ISO-8859-1 are also
+/// supported. Names are compared without regard to case, as charset names
+/// are. Any other encoding is SESU0007.
+fn json_encodable(encoding: &str) -> error::Result<Option<Encodable>> {
+    match encoding.to_ascii_uppercase().as_str() {
+        "UTF-8" | "UTF-16" | "UTF-16BE" | "UTF-16LE" | "UTF-32" | "UTF-32BE" | "UTF-32LE" => {
+            Ok(None)
+        }
+        "US-ASCII" | "ASCII" | "ISO646-US" | "ANSI_X3.4-1968" => Ok(Some(is_ascii)),
+        "ISO-8859-1" | "ISO_8859-1" | "ISO8859-1" | "LATIN1" | "L1" => Ok(Some(is_latin1)),
+        _ => Err(error::Error::SESU0007),
     }
 }
 
-fn serialize_json_item(
-    item: &Item,
-    parameters: &SerializationParameters,
-    xot: &mut Xot,
-) -> Result<json::JsonValue, error::Error> {
-    match item {
-        Item::Atomic(atomic) => serialize_json_atomic(atomic, parameters),
-        Item::Node(node) => serialize_json_node(*node, parameters, xot),
-        Item::Function(function) => serialize_json_function(function, parameters, xot),
+fn is_ascii(c: char) -> bool {
+    c.is_ascii()
+}
+
+fn is_latin1(c: char) -> bool {
+    u32::from(c) <= 0xFF
+}
+
+/// The `normalization-form` parameter for the JSON output method
+/// (Serialization 3.1 §9.1.9). NFC and none are required; NFD, NFKC and
+/// NFKD are also supported. The values are the names §3 enumerates, as
+/// written; `fully-normalized` and any other value are SESU0011.
+enum Normalization {
+    None,
+    Composing(ComposingNormalizer),
+    Decomposing(DecomposingNormalizer),
+}
+
+impl Normalization {
+    fn new(form: Option<&str>) -> error::Result<Self> {
+        match form {
+            None | Some("none") => Ok(Normalization::None),
+            Some("NFC") => Ok(Normalization::Composing(ComposingNormalizer::new_nfc())),
+            Some("NFKC") => Ok(Normalization::Composing(ComposingNormalizer::new_nfkc())),
+            Some("NFD") => Ok(Normalization::Decomposing(DecomposingNormalizer::new_nfd())),
+            Some("NFKD") => Ok(Normalization::Decomposing(DecomposingNormalizer::new_nfkd())),
+            Some(_) => Err(error::Error::SESU0011),
+        }
+    }
+
+    fn apply<'s>(&self, s: &'s str) -> Cow<'s, str> {
+        match self {
+            Normalization::None => Cow::Borrowed(s),
+            Normalization::Composing(normalizer) => Cow::Owned(normalizer.normalize(s)),
+            Normalization::Decomposing(normalizer) => Cow::Owned(normalizer.normalize(s)),
+        }
     }
 }
 
-fn serialize_json_atomic(
-    atomic: &atomic::Atomic,
-    parameters: &SerializationParameters,
-) -> Result<json::JsonValue, error::Error> {
-    match atomic {
-        atomic::Atomic::Float(float) => {
-            let f = float.into_inner();
-            if f.is_infinite() || f.is_nan() {
-                return Err(error::Error::SERE0020);
+/// A refused writer call. The serializer makes only calls that fit the
+/// JSON grammar at that point, and every number text it passes is a
+/// canonical xs:float, xs:double, xs:decimal or xs:integer string after the
+/// INF and NaN check, which is always an RFC 8259 number; so none of these
+/// is reached. They are errors rather than panics all the same: a number
+/// the writer refuses cannot be represented in the JSON grammar (SERE0020),
+/// and any other refusal is FOER0000.
+fn write_error(error: WriteError) -> error::Error {
+    match error {
+        WriteError::InvalidNumber => error::Error::SERE0020,
+        _ => error::Error::FOER0000,
+    }
+}
+
+struct JsonSerializer<'p> {
+    writer: Writer<'static>,
+    parameters: &'p SerializationParameters,
+    normalization: Normalization,
+}
+
+impl JsonSerializer<'_> {
+    fn sequence(&mut self, arg: &Sequence, xot: &mut Xot) -> error::Result<()> {
+        match arg {
+            Sequence::One(item) => self.item(item.item(), xot),
+            Sequence::Empty(_) => self.writer.null().map_err(write_error),
+            Sequence::Many(_) | Sequence::Range(_) => Err(error::Error::SERE0023),
+        }
+    }
+
+    fn item(&mut self, item: &Item, xot: &mut Xot) -> error::Result<()> {
+        match item {
+            Item::Atomic(atomic) => self.atomic(atomic),
+            Item::Node(node) => self.node(*node, xot),
+            Item::Function(function) => self.function(function, xot),
+        }
+    }
+
+    fn atomic(&mut self, atomic: &atomic::Atomic) -> error::Result<()> {
+        match atomic {
+            atomic::Atomic::Float(float) if !float.into_inner().is_finite() => {
+                Err(error::Error::SERE0020)
             }
-            Ok(json::JsonValue::Number(f.into()))
-        }
-        atomic::Atomic::Double(double) => {
-            let d = double.into_inner();
-            if d.is_infinite() || d.is_nan() {
-                return Err(error::Error::SERE0020);
+            atomic::Atomic::Double(double) if !double.into_inner().is_finite() => {
+                Err(error::Error::SERE0020)
             }
-            Ok(json::JsonValue::Number(d.into()))
-        }
-        atomic::Atomic::Decimal(decimal) => {
-            let d: f64 = (*decimal.as_ref())
-                .try_into()
-                .map_err(|_| error::Error::SERE0020)?;
-            Ok(json::JsonValue::Number(d.into()))
-        }
-        atomic::Atomic::Integer(_t, integer) => {
-            let i: f64 = integer.to_f64();
-            Ok(json::JsonValue::Number(i.into()))
-        }
-        atomic::Atomic::Boolean(b) => Ok(json::JsonValue::Boolean(*b)),
-        _ => {
-            let s = atomic.string_value();
-            Ok(serialize_json_string(s, parameters))
+            atomic::Atomic::Float(_)
+            | atomic::Atomic::Double(_)
+            | atomic::Atomic::Decimal(_)
+            | atomic::Atomic::Integer(..) => self
+                .writer
+                .number(&atomic.string_value())
+                .map_err(write_error),
+            atomic::Atomic::Boolean(b) => self.writer.bool(*b).map_err(write_error),
+            _ => self.string(&atomic.string_value()),
         }
     }
-}
 
-fn serialize_json_string(s: String, _parameters: &SerializationParameters) -> json::JsonValue {
-    // TODO: normalization-form
-
-    // NOTE: tests serialize-json-127 and serialize-json-128 fail because
-    // the forward slash (solidus) character is not escaped. This is because
-    // the json crate does not do so. This is consistent with the JSON RFC
-    // https://softwareengineering.stackexchange.com/questions/444480/json-rfc8259-escape-forward-slash-or-not
-    // but not consistent with the serialization spec which wrongfully manadates
-    // it anyway.
-    // https://www.w3.org/TR/xslt-xquery-serialization-31/#json-output
-    json::JsonValue::String(s)
-}
-
-fn serialize_json_node(
-    node: xot::Node,
-    parameters: &SerializationParameters,
-    xot: &mut Xot,
-) -> Result<json::JsonValue, error::Error> {
-    // from_map already rejects values outside the parameter's domain; this
-    // guards hand-built parameters, where `json` would recurse.
-    if let Some("json" | "adaptive") = parameters.json_node_output_method.local_name() {
-        return Err(error::Error::SEPM0016);
+    fn string(&mut self, s: &str) -> error::Result<()> {
+        let s = self.normalization.apply(s);
+        self.writer.string(&s).map_err(write_error)
     }
-    let node_parameters =
-        SerializationParameters::xml_in_json_serialization(&parameters.json_node_output_method);
-    let sequence: Sequence = vec![node].into();
-    let s = serialize_sequence(&sequence, node_parameters, xot)?;
-    Ok(serialize_json_string(s, parameters))
-}
 
-fn serialize_json_function(
-    function: &function::Function,
-    parameters: &SerializationParameters,
-    xot: &mut Xot,
-) -> Result<json::JsonValue, error::Error> {
-    match function {
-        function::Function::Array(array) => serialize_json_array(array, parameters, xot),
-        function::Function::Map(map) => serialize_json_map(map, parameters, xot),
-        _ => Err(error::Error::SERE0021),
+    fn key(&mut self, s: &str) -> error::Result<()> {
+        let s = self.normalization.apply(s);
+        self.writer.key(&s).map_err(write_error)
     }
-}
 
-fn serialize_json_array(
-    array: &function::Array,
-    parameters: &SerializationParameters,
-    xot: &mut Xot,
-) -> Result<json::JsonValue, error::Error> {
-    let mut result = Vec::with_capacity(array.len());
-    for entry in array.iter() {
-        let serialized = serialize_json_sequence(entry, parameters, xot)?;
-        result.push(serialized);
+    fn node(&mut self, node: xot::Node, xot: &mut Xot) -> error::Result<()> {
+        // from_map already rejects values outside the parameter's domain;
+        // this guards hand-built parameters, where `json` would recurse.
+        if let Some("json" | "adaptive") = self.parameters.json_node_output_method.local_name() {
+            return Err(error::Error::SEPM0016);
+        }
+        let node_parameters = SerializationParameters::xml_in_json_serialization(
+            &self.parameters.json_node_output_method,
+        );
+        let sequence: Sequence = vec![node].into();
+        let s = serialize_sequence(&sequence, node_parameters, xot)?;
+        self.string(&s)
     }
-    Ok(json::JsonValue::Array(result))
-}
 
-fn serialize_json_map(
-    map: &function::Map,
-    parameters: &SerializationParameters,
-    xot: &mut Xot,
-) -> Result<json::JsonValue, error::Error> {
-    let mut result = json::object::Object::new();
-    for key in map.keys() {
-        let key_s = key.string_value();
-        let value = map.get(key).unwrap();
-        let value = serialize_json_sequence(value, parameters, xot)?;
-        result.insert(&key_s, value);
+    fn function(&mut self, function: &function::Function, xot: &mut Xot) -> error::Result<()> {
+        match function {
+            function::Function::Array(array) => self.array(array, xot),
+            function::Function::Map(map) => self.map(map, xot),
+            _ => Err(error::Error::SERE0021),
+        }
     }
-    Ok(json::JsonValue::Object(result))
+
+    fn array(&mut self, array: &function::Array, xot: &mut Xot) -> error::Result<()> {
+        self.writer.start_array().map_err(write_error)?;
+        for member in array.iter() {
+            self.sequence(member, xot)?;
+        }
+        self.writer.end_array().map_err(write_error)
+    }
+
+    fn map(&mut self, map: &function::Map, xot: &mut Xot) -> error::Result<()> {
+        self.writer.start_object().map_err(write_error)?;
+        // §9: keys are compared by their string value, before normalization.
+        let mut names = HashSet::default();
+        for (key, value) in map.entries() {
+            let name = key.string_value();
+            if !self.parameters.allow_duplicate_names && !names.insert(name.clone()) {
+                return Err(error::Error::SERE0022);
+            }
+            self.key(&name)?;
+            self.sequence(value, xot)?;
+        }
+        self.writer.end_object().map_err(write_error)
+    }
 }
 
 fn xot_indentation(

@@ -28,7 +28,8 @@ The writer:
   character-map output.
 - Compact output (no whitespace outside strings) or indented output.
 - Misuse is refused with an error; the tokenizer reads the output back as
-  the same events.
+  the same events, within its maximum depth (the writer has no depth
+  limit).
 
 It has no dependencies beyond `std`.
 

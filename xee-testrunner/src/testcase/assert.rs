@@ -643,9 +643,20 @@ impl AssertError {
         // all errors are officially a pass, but we check whether the error
         // code matches too
         let code = error.code_qname();
-        // FIXME: there is no checking for the correct namespace here, should
-        // there be?
-        if code.local_name() == self.0 {
+        // A code written as an EQName, `Q{uri}local`, names its namespace
+        // (`Q{}local`: none) and is compared in full. A plain code is
+        // compared by local name only.
+        let (namespace, local_name) = match self
+            .0
+            .strip_prefix("Q{")
+            .and_then(|rest| rest.split_once('}'))
+        {
+            Some((namespace, local_name)) => (Some(namespace), local_name),
+            None => (None, self.0.as_str()),
+        };
+        if code.local_name() == local_name
+            && namespace.is_none_or(|namespace| code.namespace() == namespace)
+        {
             TestOutcome::Passed
         } else {
             TestOutcome::UnexpectedError(UnexpectedError(code.local_name().to_string()))
@@ -1132,5 +1143,49 @@ mod tests {
                 )),
             ]))
         );
+    }
+
+    fn error_of(expr: &str) -> error::ErrorValue {
+        let mut documents = Documents::new();
+        let queries = Queries::default();
+        let query = queries.sequence(expr).unwrap();
+        query
+            .execute_build_context(&mut documents, |_builder| ())
+            .expect_err(expr)
+            .error
+    }
+
+    fn passes(expected: &str, expr: &str) -> bool {
+        let outcome = AssertError::new(expected.to_string()).assert_error(&error_of(expr));
+        outcome == TestOutcome::Passed
+    }
+
+    // An expected code written as an EQName is compared by namespace and
+    // local name; a plain code by local name only.
+    #[test]
+    fn test_assert_error_code() {
+        let no_namespace = "error(QName('', 'X'))";
+        let a = "error(QName('urn:a', 'a:X'))";
+        let b = "error(QName('urn:b', 'b:X'))";
+        let other = "error(QName('', 'Y'))";
+        assert!(passes("Q{}X", no_namespace));
+        assert!(!passes("Q{}X", a));
+        assert!(passes("Q{urn:a}X", a));
+        assert!(!passes("Q{urn:a}X", b));
+        assert!(!passes("Q{urn:a}X", no_namespace));
+        assert!(!passes("Q{}X", other));
+        assert!(passes("X", no_namespace));
+        assert!(passes("X", a));
+        assert!(!passes("X", other));
+        assert!(passes("*", other));
+        // A built-in error is in the xqt-errors namespace.
+        let builtin = "parse-json('[')";
+        assert!(passes("FOJS0001", builtin));
+        assert!(passes(
+            "Q{http://www.w3.org/2005/xqt-errors}FOJS0001",
+            builtin
+        ));
+        assert!(!passes("Q{}FOJS0001", builtin));
+        assert!(!passes("FOJS0003", builtin));
     }
 }

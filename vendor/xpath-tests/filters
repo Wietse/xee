@@ -59,8 +59,6 @@ fo-test-fn-parse-ietf-date-002
 fo-test-fn-parse-ietf-date-003
 fo-test-fn-parse-ietf-date-004
 fo-test-fn-parse-ietf-date-005
-fo-test-fn-parse-json-005
-fo-test-fn-parse-json-007
 fo-test-fn-starts-with-004
 fo-test-fn-starts-with-005
 fo-test-fn-starts-with-006
@@ -1168,36 +1166,11 @@ parse-ietf-date-errs28
 parse-ietf-date-errs4
 parse-ietf-date-errs5
 = fn-parse-json
-fn-parse-json-050
-fn-parse-json-052
-fn-parse-json-053
-fn-parse-json-054
-fn-parse-json-055
-fn-parse-json-056
-fn-parse-json-057
-fn-parse-json-058
-fn-parse-json-059
-fn-parse-json-060
-fn-parse-json-062
-fn-parse-json-063
 fn-parse-json-101
 fn-parse-json-102
 fn-parse-json-103
 fn-parse-json-104
 fn-parse-json-105
-fn-parse-json-108
-fn-parse-json-109
-fn-parse-json-110
-fn-parse-json-919
-fn-parse-json-922
-fn-parse-json-923
-fn-parse-json-924
-fn-parse-json-936
-fn-parse-json-938
-fn-parse-json-941
-fn-parse-json-942
-fn-parse-json-943
-fn-parse-json-945
 = fn-parse-xml
 parse-xml-001
 parse-xml-006

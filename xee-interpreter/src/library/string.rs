@@ -37,7 +37,7 @@ fn codepoints_to_string(arg: impl Iterator<Item = error::Result<IBig>>) -> error
     .collect::<error::Result<String>>()
 }
 
-fn is_valid_xml_char(c: char) -> bool {
+pub(crate) fn is_valid_xml_char(c: char) -> bool {
     // Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]
     c == '\t'
         || c == '\n'

@@ -91,6 +91,41 @@ impl<'a> OptionParameterConverter<'a> {
         })
     }
 
+    /// An option whose type is exactly one item (`xs:boolean`, not
+    /// `xs:boolean?`): `None` if the map has no entry for it, and a type
+    /// error (XPTY0004) if the entry's value is the empty sequence, which
+    /// does not convert to the option's type.
+    pub(crate) fn one<V>(&self, name: &str, atomic_type: Xs) -> error::Result<Option<V>>
+    where
+        V: std::convert::TryFrom<atomic::Atomic, Error = error::Error>,
+    {
+        let name: atomic::Atomic = name.to_string().into();
+        let value = self.map.get_as_type(
+            &name,
+            ast::Occurrence::One,
+            atomic_type,
+            self.static_context,
+            self.xot,
+        )?;
+        match value {
+            Some(value) => Ok(Some(value.one()?.to_atomic()?.try_into()?)),
+            None => Ok(None),
+        }
+    }
+
+    /// `one`, with `default` if the map has no entry for the option.
+    pub(crate) fn one_with_default<V>(
+        &self,
+        name: &str,
+        atomic_type: Xs,
+        default: V,
+    ) -> error::Result<V>
+    where
+        V: std::convert::TryFrom<atomic::Atomic, Error = error::Error>,
+    {
+        Ok(self.one(name, atomic_type)?.unwrap_or(default))
+    }
+
     pub(crate) fn many<V>(&self, name: &str, atomic_type: Xs) -> error::Result<Vec<V>>
     where
         V: std::convert::TryFrom<atomic::Atomic, Error = error::Error>,

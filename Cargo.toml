@@ -39,6 +39,7 @@ homepage = "https://github.com/Wietse/xee"
 [workspace.dependencies]
 xee-interpreter = { path = "xee-interpreter" }
 xee-ir = { path = "xee-ir" }
+xee-json = { path = "xee-json" }
 xee-name = { path = "xee-name" }
 xee-schema-type = { path = "xee-schema-type" }
 xee-xpath = { path = "xee-xpath" }

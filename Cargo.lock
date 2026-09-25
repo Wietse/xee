@@ -3076,6 +3076,11 @@ dependencies = [
 [[package]]
 name = "xee-json"
 version = "0.1.0"
+dependencies = [
+ "divan",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "xee-name"

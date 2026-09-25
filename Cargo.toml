@@ -73,6 +73,7 @@ iri-string = "0.7.7"
 json = "0.12.4"
 insta = "1.42.2"
 ron = "0.8.1"
+divan = "0.1.17"
 
 # [profile.test.package.xot]
 # opt-level = 3

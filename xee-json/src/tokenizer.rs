@@ -346,10 +346,38 @@ impl<'a> Tokenizer<'a> {
                 Some(0x00..=0x1F) => return Err(self.error(ErrorKind::ControlCharInString)),
                 // Any other byte, including those of multi-byte characters:
                 // only the ASCII bytes above end or change the scan.
-                Some(_) => self.pos += 1,
+                Some(_) => self.skip_plain(),
                 None => return Err(self.error(ErrorKind::UnexpectedEof)),
             }
         }
+    }
+
+    /// Advances past the run of bytes, starting at the current one, that
+    /// cannot end or change a string scan (see [`is_string_special`]): eight
+    /// bytes at a time while a whole word has none, then byte by byte. It
+    /// stops at the first special byte or at the end of the input, exactly
+    /// where a byte-by-byte scan stops, so error offsets do not change. The
+    /// word test may only err towards reporting a special byte: that ends
+    /// the fast part early and the byte scan decides, whereas a missed one
+    /// would be skipped.
+    fn skip_plain(&mut self) {
+        let rest = self.input.as_bytes().get(self.pos..).unwrap_or_default();
+        let mut skipped = 0;
+        for chunk in rest.chunks_exact(8) {
+            let Ok(word) = <[u8; 8]>::try_from(chunk) else {
+                break;
+            };
+            if word_has_string_special(u64::from_le_bytes(word)) {
+                break;
+            }
+            skipped += 8;
+        }
+        let tail = rest.get(skipped..).unwrap_or_default();
+        skipped += tail
+            .iter()
+            .position(|&byte| is_string_special(byte))
+            .unwrap_or(tail.len());
+        self.pos += skipped;
     }
 
     /// Validates the escape whose backslash is the current byte (RFC 8259
@@ -429,6 +457,39 @@ impl<'a> Tokenizer<'a> {
         }
         Ok(())
     }
+}
+
+/// Whether `byte` ends or changes the scan of a string: the closing quote,
+/// the backslash of an escape, or a control character U+0000 to U+001F,
+/// which RFC 8259 §7 does not allow unescaped. Every other byte, including
+/// each byte of a multi-byte character, is part of a literal run.
+fn is_string_special(byte: u8) -> bool {
+    matches!(byte, b'"' | b'\\' | 0x00..=0x1F)
+}
+
+/// 0x01 in each byte of a word.
+const ONES: u64 = u64::MAX / 0xFF;
+/// 0x80 in each byte of a word.
+const HIGHS: u64 = ONES << 7;
+
+/// Non-zero exactly when some byte of `word` is below `bound` (at most
+/// 0x80). Subtracting `bound` from each byte sets its high bit when the
+/// byte is below `bound`; `!word` discards bytes whose high bit was
+/// already set. A borrow can also mark a byte above one that is below
+/// `bound`, but only when such a byte exists, so the answer to "is any
+/// byte below `bound`" is exact.
+fn bytes_below(word: u64, bound: u8) -> u64 {
+    word.wrapping_sub(ONES * u64::from(bound)) & !word & HIGHS
+}
+
+/// Whether any of the eight bytes of `word` is [`is_string_special`]: a
+/// control character is below 0x20, and XOR with a repeated byte turns
+/// that byte into zero, which is below 1.
+fn word_has_string_special(word: u64) -> bool {
+    let controls = bytes_below(word, 0x20);
+    let quotes = bytes_below(word ^ (ONES * u64::from(b'"')), 1);
+    let backslashes = bytes_below(word ^ (ONES * u64::from(b'\\')), 1);
+    controls | quotes | backslashes != 0
 }
 
 impl<'a> Iterator for Tokenizer<'a> {

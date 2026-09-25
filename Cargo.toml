@@ -2,6 +2,7 @@
 members = [
   "xee",
   "xee-name",
+  "xee-json",
   "xee-schema-type",
   "xee-xpath-type",
   "xee-interpreter",

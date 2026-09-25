@@ -3074,6 +3074,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "xee-json"
+version = "0.1.0"
+
+[[package]]
 name = "xee-name"
 version = "0.1.5"
 dependencies = [

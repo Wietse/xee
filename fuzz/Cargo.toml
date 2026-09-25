@@ -1,0 +1,40 @@
+[package]
+name = "xee-json-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT"
+description = "Fuzz targets for the xee-json tokenizer (run with cargo +nightly fuzz)"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone workspace: keeps the fuzz crate out of the parent workspace's
+# build graph, so the stable gate never compiles libfuzzer.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+xee-json = { path = "../xee-json" }
+serde = "1"
+# arbitrary_precision: numbers keep their text, so the differential compares
+# number text rather than f64 values. It also makes Value read an object
+# whose first key is "$serde_json::private::Number" as a number; the harness
+# lists that as the NUMBER_TOKEN_KEY divergence. preserve_order: object
+# members keep their source order, so the differential can compare member
+# order.
+serde_json = { version = "1.0.151", features = ["arbitrary_precision", "preserve_order"] }
+
+[[bin]]
+name = "robustness"
+path = "fuzz_targets/robustness.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential"
+path = "fuzz_targets/differential.rs"
+test = false
+doc = false
+bench = false

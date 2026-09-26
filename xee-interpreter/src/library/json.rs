@@ -23,7 +23,9 @@ fn parse_json1(json_text: Option<&str>) -> error::Result<Option<sequence::Item>>
     let Some(json_text) = json_text else {
         return Ok(None);
     };
-    // Without an options map `escape` is false: see `ParseJsonParameters`.
+    // The one-argument form is the two-argument form with an empty map
+    // (§17.5.1), so every option has its default; `escape` defaults to
+    // false, see `ParseJsonParameters::from_map`.
     let settings = Settings {
         duplicates: Duplicates::UseFirst,
         escape: false,
@@ -83,13 +85,18 @@ struct Settings {
 ///
 /// What it receives. §17.5.1 says the argument is always a two- or
 /// six-character escape sequence that conforms to the JSON grammar, not that
-/// it is the text as written. It is the canonical escape, the same text that
-/// escape=true writes: `\b` and `\f` for U+0008 and U+000C, otherwise `\u`
-/// and four upper-case hexadecimal digits. So it depends only on the decoded
-/// character, and keys that are equal after expanding escapes, which
-/// `duplicates` treats as duplicates, stay equal after `fallback` however
-/// their escapes are spelled (U+000B written with lower- or upper-case hex,
-/// U+0008 written as `\b` or as a six-character escape).
+/// it is the text as written. It is always the six-character form, `\u` and
+/// four upper-case hexadecimal digits, also for U+0008 and U+000C, which
+/// JSON can write as `\b` and `\f`. It depends only on the decoded
+/// character, however the input spells it, and it is the form the §17.5.3
+/// fallback example looks up (a map keyed by `'\u0000'` to `'\u001F'`), so
+/// that pattern works for every character that reaches `fallback`. This is
+/// not the text escape=true writes, which keeps the two-character forms
+/// (see `push_canonical_escape`).
+///
+/// Whether two keys are duplicates does not depend on what `fallback`
+/// returns for them: keys are compared after expanding escapes (see
+/// `Object::key`).
 type Fallback<'a> = dyn FnMut(&str) -> error::Result<String> + 'a;
 
 /// The default `fallback`: U+FFFD REPLACEMENT CHARACTER.
@@ -138,13 +145,17 @@ impl ParseJsonParameters {
         if escape == Some(true) && fallback.is_some() {
             return Err(error::Error::FOJS0005);
         }
-        // The `escape` default. The option table says true, but the spec's
-        // examples and QT3 assume false (https://github.com/w3c/qt3tests/issues/65),
-        // so it is false without an options map (`parse_json1`) and true
-        // with one. A `fallback` without `escape` is applied, as in the
-        // spec's own example (map{'fallback':function($s){'['||$s||']'}}),
-        // so `escape` is then false too: it can only be true when explicit.
-        let escape = escape.unwrap_or(fallback.is_none());
+        // The `escape` default is false in every case: without an options
+        // map (`parse_json1`), with an empty map, and with a map that has
+        // other options, `fallback` among them. §17.5.1 says the
+        // one-argument form is the same as the two-argument form with an
+        // empty map, and §1.5 says an empty map has the same effect as
+        // omitting the argument. Those two rules outweigh the option
+        // table's "Default: true", and false is what the spec's examples
+        // (among them the `fallback` example) and QT3 assume
+        // (https://github.com/w3c/qt3tests/issues/65). So `escape` is true
+        // only when it is given as true.
+        let escape = escape.unwrap_or(false);
         Ok(Self {
             settings: Settings { duplicates, escape },
             fallback,
@@ -217,7 +228,7 @@ fn parse(
                 continue;
             }
             Event::Key(key) => {
-                let key = string_value(key, settings.escape, fallback)?;
+                let key = object_key(key, settings.escape, fallback)?;
                 match stack.last_mut() {
                     Some(Container::Object(object)) => object.key(key, settings.duplicates)?,
                     // The tokenizer delivers keys only inside objects.
@@ -269,56 +280,156 @@ enum Container {
     Object(Object),
 }
 
+/// An object member's key: the xs:string it becomes, and, if `fallback`
+/// was applied to any of its characters, the key as it is after expanding
+/// escapes.
+struct Key {
+    string: String,
+    decoded: Option<String>,
+}
+
+/// The key of an object member (see `Object::key`).
+///
+/// The decoded key is only needed when `fallback` was applied: it holds a
+/// lone surrogate or a character that is not valid in XML, which the
+/// xs:string cannot represent. It is written in the canonical escaped form
+/// of escape=true, which represents every decoded key, lone surrogates
+/// included, and is one-to-one because the backslash is escaped too. Under
+/// escape=true `fallback` is never called, so the string is already that
+/// form and there is no decoded key.
+fn object_key(s: Str<'_>, escape: bool, fallback: &mut Fallback<'_>) -> error::Result<Key> {
+    let mut replaced = false;
+    let string = string_value(s, escape, &mut |source: &str| {
+        replaced = true;
+        fallback(source)
+    })?;
+    let decoded = if replaced {
+        // escape=true never calls the function it is given.
+        Some(string_value(s, true, &mut replacement_character)?)
+    } else {
+        None
+    };
+    Ok(Key { string, decoded })
+}
+
 /// An open object: the members so far, keyed by their final xs:string, and
 /// the key of the member whose value is being read.
 struct Object {
-    members: HashMap<String, sequence::Sequence>,
-    key: Option<String>,
+    members: HashMap<String, Member>,
+    /// For each member whose key has a decoded form (see `Key`), that form
+    /// and the member's final key.
+    decoded: HashMap<String, String>,
+    key: Option<Key>,
+}
+
+struct Member {
+    value: sequence::Sequence,
+    decoded: Option<String>,
 }
 
 impl Object {
     fn new() -> Self {
         Object {
             members: HashMap::new(),
+            decoded: HashMap::new(),
             key: None,
         }
     }
 
-    /// Starts a member. Keys are compared as the strings they become, that
-    /// is after escapes are expanded and `fallback` is applied, or in escaped
-    /// form under `escape` (§17.5.1), by codepoints. Keys equal after
-    /// expanding escapes are equal here too, because `fallback` receives the
-    /// canonical escape (see `Fallback`); two keys that only become equal
-    /// through `fallback` are duplicates as well, rather than a map
-    /// construction error.
-    fn key(&mut self, key: String, duplicates: Duplicates) -> error::Result<()> {
-        if duplicates == Duplicates::Reject && self.members.contains_key(&key) {
+    /// Starts a member.
+    ///
+    /// §17.5.1 compares keys by codepoints after expanding escapes, or in
+    /// escaped form under `escape`. So a key is a duplicate of an earlier
+    /// one when both are equal after expanding escapes, whatever `fallback`
+    /// returns for them: two occurrences of `\u0000` are duplicates even if
+    /// `fallback` returns a different string on each call. Keys that are
+    /// equal after expanding escapes and need no `fallback` are equal as
+    /// final strings, and a key that needs `fallback` is never equal after
+    /// expanding escapes to one that does not, so the decoded form is
+    /// compared only for keys that have one.
+    ///
+    /// A key is also a duplicate when its final string equals an earlier
+    /// one's, although the two differ after expanding escapes (for example
+    /// U+FFFF and U+FFFE, both replaced by U+FFFD): the `duplicates` policy
+    /// applies to them too, rather than map construction's XQDY0137, which
+    /// could not arise from anything in the JSON text.
+    ///
+    /// A key is compared with the members kept so far: under `use-first` an
+    /// ignored member leaves no trace, and under `use-last` neither does a
+    /// replaced one. This only matters when `fallback` gives equal decoded
+    /// keys different strings.
+    fn key(&mut self, key: Key, duplicates: Duplicates) -> error::Result<()> {
+        if duplicates == Duplicates::Reject && self.is_duplicate(&key) {
             return Err(error::Error::FOJS0003);
         }
         self.key = Some(key);
         Ok(())
     }
 
-    /// Ends a member: `use-first` keeps the value already there, `use-last`
-    /// replaces it (members arrive in document order).
+    /// Ends a member: `use-first` keeps the member already there, `use-last`
+    /// replaces it (members arrive in document order). A member that
+    /// replaces another keeps its own final key, the result of its own
+    /// `fallback` calls; it replaces every earlier member it duplicates.
     fn value(&mut self, value: sequence::Sequence, duplicates: Duplicates) -> error::Result<()> {
         let key = self.key.take().ok_or(error::Error::FOJS0001)?;
         match duplicates {
             Duplicates::UseLast => {
-                self.members.insert(key, value);
+                self.remove_duplicates_of(&key);
+                self.insert(key, value);
             }
             Duplicates::UseFirst | Duplicates::Reject => {
-                self.members.entry(key).or_insert(value);
+                if !self.is_duplicate(&key) {
+                    self.insert(key, value);
+                }
             }
         }
         Ok(())
+    }
+
+    fn is_duplicate(&self, key: &Key) -> bool {
+        self.members.contains_key(&key.string)
+            || key
+                .decoded
+                .as_ref()
+                .is_some_and(|decoded| self.decoded.contains_key(decoded))
+    }
+
+    /// Removes the earlier members `key` duplicates: at most one with the
+    /// same decoded key and one with the same final key, which are
+    /// different members only if `fallback` gave the same decoded key two
+    /// different strings.
+    fn remove_duplicates_of(&mut self, key: &Key) {
+        if let Some(decoded) = &key.decoded {
+            if let Some(string) = self.decoded.remove(decoded) {
+                self.members.remove(&string);
+            }
+        }
+        if let Some(member) = self.members.remove(&key.string) {
+            if let Some(decoded) = member.decoded {
+                self.decoded.remove(&decoded);
+            }
+        }
+    }
+
+    /// Adds a member whose key duplicates no member there.
+    fn insert(&mut self, key: Key, value: sequence::Sequence) {
+        if let Some(decoded) = &key.decoded {
+            self.decoded.insert(decoded.clone(), key.string.clone());
+        }
+        self.members.insert(
+            key.string,
+            Member {
+                value,
+                decoded: key.decoded,
+            },
+        );
     }
 
     fn into_map(self) -> error::Result<function::Map> {
         function::Map::new(
             self.members
                 .into_iter()
-                .map(|(key, value)| (atomic::Atomic::from(key), value))
+                .map(|(key, member)| (atomic::Atomic::from(key), member.value))
                 .collect(),
         )
     }
@@ -384,7 +495,7 @@ fn push_literal(
 }
 
 /// Appends one decoded character, whether it was escaped in the input or
-/// not. `fallback` receives its canonical escape (see `Fallback`).
+/// not. `fallback` receives its six-character escape (see `Fallback`).
 fn push_char(
     out: &mut String,
     c: char,
@@ -396,9 +507,9 @@ fn push_char(
     } else if escape {
         push_canonical_escape(out, c);
     } else {
-        let mut canonical = String::new();
-        push_canonical_escape(&mut canonical, c);
-        out.push_str(&fallback(&canonical)?);
+        let mut source = String::new();
+        push_unicode_escape(&mut source, u32::from(c));
+        out.push_str(&fallback(&source)?);
     }
     Ok(())
 }
@@ -420,10 +531,10 @@ fn is_special(c: char) -> bool {
     matches!(c, '\u{0}'..='\u{1F}' | '\u{7F}'..='\u{9F}' | '\\') || !is_valid_xml_char(c)
 }
 
-/// Appends the canonical escape for a special character: the two-character
-/// form where JSON has one, `\uXXXX` otherwise. `"` and `/` are not special,
-/// so their two-character forms never occur. It is also the argument
-/// `fallback` receives for a character that is not valid in XML.
+/// Appends the canonical escape escape=true writes for a special character:
+/// the two-character form where JSON has one, `\uXXXX` otherwise. `"` and
+/// `/` are not special, so their two-character forms never occur. `fallback`
+/// receives the six-character form instead (see `Fallback`).
 fn push_canonical_escape(out: &mut String, c: char) {
     match c {
         '\u{8}' => out.push_str("\\b"),
@@ -437,8 +548,9 @@ fn push_canonical_escape(out: &mut String, c: char) {
 }
 
 /// Appends `\uXXXX` with upper-case hexadecimal digits, as in the spec's
-/// examples (`\uDEAD`, `\uFFFF`). Every special character and every lone
-/// surrogate is in the Basic Multilingual Plane, so four digits suffice.
+/// examples (`\uDEAD`, `\uFFFF`, the §17.5.3 fallback example's
+/// `\u001F`). Every special character and every lone surrogate is in the
+/// Basic Multilingual Plane, so four digits suffice.
 fn push_unicode_escape(out: &mut String, code: u32) {
     // Writing to a String cannot fail.
     let _ = write!(out, "\\u{code:04X}");
@@ -446,4 +558,114 @@ fn push_unicode_escape(out: &mut String, code: u32) {
 
 pub(crate) fn static_function_descriptions() -> Vec<StaticFunctionDescription> {
     vec![wrap_xpath_fn!(parse_json1), wrap_xpath_fn!(parse_json2)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Parses `text` with escape=false and a fallback that returns
+    /// `results[n]` on its n-th call, and returns the result with the
+    /// arguments the fallback received, in call order.
+    fn parse_with(
+        text: &str,
+        duplicates: Duplicates,
+        results: &[&str],
+    ) -> (error::Result<Option<sequence::Item>>, Vec<String>) {
+        let mut calls: Vec<String> = Vec::new();
+        let settings = Settings {
+            duplicates,
+            escape: false,
+        };
+        let result = parse(text, &settings, &mut |source: &str| {
+            let result = results.get(calls.len()).ok_or(error::Error::FOER0000)?;
+            calls.push(source.to_string());
+            Ok(result.to_string())
+        });
+        (result, calls)
+    }
+
+    /// The members of a map of strings, sorted by key.
+    fn members(item: Option<sequence::Item>) -> Vec<(String, String)> {
+        let map = item.expect("a map").to_map().expect("a map");
+        let mut members: Vec<(String, String)> = map
+            .entries()
+            .map(|(key, value)| {
+                let value = value.clone().one().expect("one item");
+                (
+                    key.to_string().expect("a string key"),
+                    value
+                        .to_atomic()
+                        .expect("an atomic")
+                        .to_string()
+                        .expect("a string"),
+                )
+            })
+            .collect();
+        members.sort();
+        members
+    }
+
+    // Two occurrences of the same escaped key are duplicates even when the
+    // fallback gives them different strings. Under use-last the member kept
+    // has the last occurrence's own final key.
+    #[test]
+    fn test_duplicates_by_decoded_key_with_a_nondeterministic_fallback() {
+        let text = r#"{"\u0000":"a","\u0000":"b"}"#;
+        let (result, calls) = parse_with(text, Duplicates::UseFirst, &["k1", "k2"]);
+        assert_eq!(members(result.unwrap()), [("k1".into(), "a".into())]);
+        assert_eq!(calls, [r"\u0000", r"\u0000"]);
+        let (result, _) = parse_with(text, Duplicates::UseLast, &["k1", "k2"]);
+        assert_eq!(members(result.unwrap()), [("k2".into(), "b".into())]);
+        let (result, calls) = parse_with(text, Duplicates::Reject, &["k1", "k2"]);
+        assert!(matches!(result, Err(error::Error::FOJS0003)), "{result:?}");
+        assert_eq!(calls.len(), 2);
+    }
+
+    // The third key has the first one's decoded key and the second one's
+    // final key, so it duplicates both.
+    #[test]
+    fn test_a_key_that_duplicates_two_members() {
+        let text = r#"{"\u0000":"a","\u0001":"b","\u0000":"c"}"#;
+        let results = ["x", "y", "y"];
+        let (result, _) = parse_with(text, Duplicates::UseFirst, &results);
+        assert_eq!(
+            members(result.unwrap()),
+            [("x".into(), "a".into()), ("y".into(), "b".into())]
+        );
+        let (result, _) = parse_with(text, Duplicates::UseLast, &results);
+        assert_eq!(members(result.unwrap()), [("y".into(), "c".into())]);
+        let (result, _) = parse_with(text, Duplicates::Reject, &results);
+        assert!(matches!(result, Err(error::Error::FOJS0003)), "{result:?}");
+    }
+
+    // Keys are compared with the members kept so far. Under use-last the
+    // third member replaces both the first and the second; the fourth has
+    // the second one's decoded key, but the second is gone, so it is kept
+    // beside the third: each decoded key keeps its last member.
+    #[test]
+    fn test_a_replaced_member_leaves_no_trace() {
+        let text = r#"{"\u0000":"a","\u0001":"b","\u0000":"c","\u0001":"d"}"#;
+        let results = ["x", "y", "y", "z"];
+        let (result, _) = parse_with(text, Duplicates::UseLast, &results);
+        assert_eq!(
+            members(result.unwrap()),
+            [("y".into(), "c".into()), ("z".into(), "d".into())]
+        );
+        let (result, _) = parse_with(text, Duplicates::UseFirst, &results);
+        assert_eq!(
+            members(result.unwrap()),
+            [("x".into(), "a".into()), ("y".into(), "b".into())]
+        );
+    }
+
+    // The fallback is called for every key and every string value in
+    // document order, those of an ignored duplicate included.
+    #[test]
+    fn test_fallback_calls_include_ignored_duplicates() {
+        let text = r#"{"\u0000":"\u0001","\u0000":"\u0002"}"#;
+        let (result, calls) = parse_with(text, Duplicates::UseFirst, &["k", "a", "k", "b"]);
+        assert_eq!(members(result.unwrap()), [("k".into(), "a".into())]);
+        assert_eq!(calls, [r"\u0000", r"\u0001", r"\u0000", r"\u0002"]);
+    }
 }

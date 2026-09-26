@@ -28,7 +28,7 @@ fn error_of(expr: &str) -> ErrorValue {
 fn test_keys_that_collide_after_fallback() {
     let text = r#"'{"\uFFFF":1,"\uFFFE":2}'"#;
     let replacement = "codepoints-to-string(65533)";
-    // No options map: escape false, use-first, U+FFFD fallback.
+    // The defaults: escape false, use-first, U+FFFD fallback.
     assert_true(&format!(
         "let $m := parse-json({text}) return map:size($m) eq 1 and $m({replacement}) eq 1"
     ));
@@ -66,7 +66,8 @@ fn test_keys_that_collide_after_fallback() {
 
 // Keys are duplicates when they are equal after expanding escapes
 // (§17.5.1), however the escapes are spelled, also when a user fallback
-// replaces them.
+// replaces them. The identity fallback returns the six-character escape it
+// receives, so these keys are also equal as final strings.
 #[test]
 fn test_keys_equal_after_expanding_escapes_with_a_fallback() {
     let identity = "'fallback':function($s){$s}";
@@ -299,19 +300,19 @@ fn test_escape_false_replaces_only_non_xml_characters() {
     );
 }
 
-// A user fallback receives the canonical escape, once per non-XML character
-// and once per lone surrogate: \b and \f where JSON has a two-character
-// escape, otherwise six characters with upper-case hex, however the input
-// spells it.
+// A user fallback receives the canonical six-character escape with
+// upper-case hex, once per non-XML character and once per lone surrogate,
+// however the input spells it: also U+0008 and U+000C, which JSON can write
+// as \b and \f.
 #[test]
 fn test_fallback_gets_the_canonical_escape() {
     let bracket = "map{'fallback':function($s){'[' || $s || ']'}}";
     assert_true(&format!(
-        r#"parse-json('"a\u0000b\udead\bc"', {bracket}) eq 'a[\u0000]b[\uDEAD][\b]c'"#
+        r#"parse-json('"a\u0000b\udead\bc"', {bracket}) eq 'a[\u0000]b[\uDEAD][\u0008]c'"#
     ));
     assert_true(&format!(
         r#"parse-json('"\u0008\u000c\f\u000b\uffff\ufffe"', {bracket})
-           eq '[\b][\f][\f][\u000B][\uFFFF][\uFFFE]'"#
+           eq '[\u0008][\u000C][\u000C][\u000B][\uFFFF][\uFFFE]'"#
     ));
     assert_true(&format!(
         r#"parse-json('"\uD800\uD800\uD834\uDD1E"', {bracket})
@@ -372,18 +373,40 @@ fn test_unescaped_non_xml_characters() {
     ));
 }
 
-// The escape default: false without an options map (w3c/qt3tests#65),
-// true with one, false when `fallback` is given without `escape`.
+// The escape default is false in every case: the one-argument form is the
+// same as the two-argument form with an empty map (§17.5.1), and an empty
+// map is the same as omitting the argument (§1.5). This overrides the
+// option table's "Default: true", in line with w3c/qt3tests#65.
 #[test]
 fn test_escape_default_and_fallback() {
+    // A non-XML character and an escaped backslash, as a string and as a
+    // key.
+    for (text, expected) in [
+        (r#"'"\u0000"'"#, "codepoints-to-string(65533)"),
+        (r#"'"a\\b"'"#, r"'a\b'"),
+    ] {
+        for options in [
+            "",
+            ", map{}",
+            ", map{'duplicates':'use-first'}",
+            ", map{'liberal':false()}",
+        ] {
+            assert_true(&format!("parse-json({text}{options}) eq {expected}"));
+        }
+    }
+    for (text, expected) in [
+        (r#"'{"\u0000":1}'"#, "codepoints-to-string(65533)"),
+        (r#"'{"a\\b":1}'"#, r"'a\b'"),
+    ] {
+        for options in ["", ", map{}", ", map{'duplicates':'use-last'}"] {
+            assert_true(&format!(
+                "map:keys(parse-json({text}{options})) eq {expected}"
+            ));
+        }
+    }
+    // escape=true only when given.
+    assert_true(r#"parse-json('"a\\b"', map{'escape':true()}) eq 'a\\b'"#);
     let text = r#"'"\u0000"'"#;
-    assert_true(&format!(
-        "parse-json({text}) eq codepoints-to-string(65533)"
-    ));
-    assert_true(&format!(r#"parse-json({text}, map{{}}) eq '\u0000'"#));
-    assert_true(&format!(
-        r#"parse-json({text}, map{{'duplicates':'use-first'}}) eq '\u0000'"#
-    ));
     assert_true(&format!(
         "parse-json({text}, map{{'fallback':function($s){{'x'}}}}) eq 'x'"
     ));
@@ -405,6 +428,95 @@ fn test_escape_default_and_fallback() {
         error_of("parse-json((), map{'fallback':function($s){'x'},'escape':true()})"),
         ErrorValue::FOJS0005
     );
+}
+
+/// The six-character escape of `code`, upper- or lower-case hex.
+fn unicode_escape(code: u32, upper: bool) -> String {
+    let backslash = '\\';
+    if upper {
+        format!("{backslash}u{code:04X}")
+    } else {
+        format!("{backslash}u{code:04x}")
+    }
+}
+
+// The §17.5.3 fallback pattern: a map keyed by the six-character escapes of
+// the C0 controls, upper-case hex, with an error on a miss. Each of the 29
+// C0 controls that are not valid XML characters hits it, however the input
+// spells it. Tab, LF and CR are valid XML characters and never reach it.
+#[test]
+fn test_fallback_lookup_of_c0_controls() {
+    let controls: Vec<u32> = (0..0x20)
+        .filter(|c| !matches!(c, 0x09 | 0x0A | 0x0D))
+        .collect();
+    assert_eq!(controls.len(), 29);
+    let c0chars: Vec<String> = controls
+        .iter()
+        .map(|&c| format!("'{}':'[{c}]'", unicode_escape(c, true)))
+        .collect();
+    let options = format!(
+        "map{{'fallback':function($char as xs:string) as xs:string {{
+            let $c0chars := map{{{}}}, $replacement := $c0chars($char)
+            return if (exists($replacement)) then $replacement
+                   else error(QName('', 'MISS'), $char)
+        }}}}",
+        c0chars.join(",")
+    );
+    let expected: String = controls.iter().map(|c| format!("[{c}]")).collect();
+    for upper in [true, false] {
+        let text: String = controls.iter().map(|&c| unicode_escape(c, upper)).collect();
+        assert_true(&format!(
+            "parse-json('\"{text}\"', {options}) eq '{expected}'"
+        ));
+        // Keys too.
+        assert_true(&format!(
+            "map:keys(parse-json('{{\"{text}\":1}}', {options})) eq '{expected}'"
+        ));
+    }
+    // The two-character forms.
+    assert_true(&format!(r#"parse-json('"\b\f"', {options}) eq '[8][12]'"#));
+    // Tab, LF and CR, however written, are themselves.
+    assert_true(&format!(
+        r#"parse-json('"\t\n\r\u0009\u000a\u000D"', {options})
+           eq codepoints-to-string((9, 10, 13, 9, 10, 13))"#
+    ));
+    // Any other character that reaches the fallback misses the map.
+    for text in [r#"'"\uFFFF"'"#, r#"'"\udead"'"#] {
+        let error = error_of(&format!("parse-json({text}, {options})"));
+        assert_eq!(error.code(), "MISS", "{text}");
+    }
+}
+
+// Duplicate keys are detected on the decoded key, not on what the fallback
+// returns for it: a fallback that returns a different string on each call
+// does not split equal keys into two members, however their escapes are
+// spelled.
+#[test]
+fn test_duplicates_are_detected_on_the_decoded_key() {
+    let fresh = "'fallback':function($s){generate-id(parse-xml('<a/>'))}";
+    // The fallback does return a different string on each call.
+    assert_true(&format!(
+        r#"let $a := parse-json('["\u0000","\u0000"]', map{{{fresh}}})
+           return $a(1) ne $a(2)"#
+    ));
+    for text in [
+        r#"'{"\u0000":1,"\u0000":2}'"#,
+        r#"'{"\u000b":1,"\u000B":2}'"#,
+        r#"'{"\b":1,"\u0008":2}'"#,
+    ] {
+        let expr = format!("parse-json({text}, map{{'duplicates':'reject',{fresh}}})");
+        assert_eq!(error_of(&expr), ErrorValue::FOJS0003, "{expr}");
+        for (options, value) in [
+            (format!("map{{{fresh}}}"), 1),
+            (format!("map{{'duplicates':'use-first',{fresh}}}"), 1),
+            (format!("map{{'duplicates':'use-last',{fresh}}}"), 2),
+        ] {
+            assert_true(&format!(
+                "let $m := parse-json({text}, {options}) \
+                 return map:size($m) eq 1 and $m?* eq {value}"
+            ));
+        }
+    }
 }
 
 #[test]

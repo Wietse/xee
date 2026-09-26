@@ -14,7 +14,8 @@ homepage.workspace = true
 # std only: no runtime dependencies.
 [dependencies]
 
-# The benchmark against serde_json (benches/tokenizer.rs) only.
+# The benchmark against serde_json (benches/tokenizer.rs) and the test that
+# runs its input guards (tests/bench_inputs.rs).
 [dev-dependencies]
 divan = { workspace = true }
 serde = { workspace = true }

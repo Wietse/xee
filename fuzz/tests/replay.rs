@@ -342,14 +342,27 @@ fn seed_number_token_key() {
         matches!(as_number, Ok(Value::Number(_))),
         "serde_json no longer reads the token key as a number: {as_number:?}"
     );
+    // The same key with its '$' written as a six-character escape: built
+    // from parts, so that no escape is written literally in this file.
+    let backslash = '\\';
+    let escaped_token = token.replacen('$', &format!("{backslash}u0024"), 1);
+    let plain = format!(r#"{{"{token}": "1"}}"#);
+    let escaped = format!(r#"{{"{escaped_token}": "1"}}"#);
+    assert!(escaped.contains(backslash), "{escaped}");
+    assert_eq!(escaped.len(), plain.len() + 5, "{escaped}");
+    assert_ne!(escaped, plain);
     for text in [
-        format!(r#"{{"{token}": "1"}}"#),
+        plain,
         format!(r#"{{"{token}": "abc"}}"#),
         format!(r#"{{"{token}": 5}}"#),
         format!(r#"[{{"{token}": "1", "b": 2}}]"#),
         format!(r#"[{{"{token}": "1.5"}}]"#),
-        // The same key written with an escape decodes to the token.
-        r#"{"$serde_json::private::Number": "1"}"#.to_string(),
+        // The escaped key decodes to the token.
+        escaped,
+        // The first key of a nested object, and of a later sibling object:
+        // serde_json classifies the first key of every object.
+        format!(r#"{{"a": {{"{token}": "1"}}}}"#),
+        format!(r#"[{{"a": 1}}, {{"{token}": "1"}}]"#),
     ] {
         assert!(serde_json::from_str::<IgnoredAny>(&text).is_ok(), "{text}");
         let report = differential_str(&text);

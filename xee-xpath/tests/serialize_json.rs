@@ -267,6 +267,20 @@ fn test_keys_with_the_same_string_value_are_sere0022() {
         );
     }
     assert_eq!(json("map{1:1}", ""), r#"{"1":1}"#);
+    // Each map has its own names: the same key in a sibling map or in a
+    // nested map is no duplicate.
+    for (arg, expected) in [
+        ("[map{'a':1}, map{'a':2}]", r#"[{"a":1},{"a":2}]"#),
+        ("map{'a':map{'a':1}}", r#"{"a":{"a":1}}"#),
+        ("map{'a':[map{'a':1}]}", r#"{"a":[{"a":1}]}"#),
+    ] {
+        assert_eq!(json(arg, ""), expected, "{arg}");
+        assert_eq!(
+            json(arg, "'allow-duplicate-names':false()"),
+            expected,
+            "{arg}"
+        );
+    }
 }
 
 #[test]
@@ -323,27 +337,58 @@ fn test_indent() {
 
 // §9: characters the encoding cannot represent are escaped; §9.1.3:
 // UTF-8 and UTF-16 are required, an unsupported encoding is SESU0007.
+// Every name Xee accepts is used at least once.
 #[test]
 fn test_encoding_escapes_what_it_cannot_represent() {
-    // x, U+00E9, U+0100, U+1D11E
-    let text = "codepoints-to-string((120, 233, 256, 119070))";
-    let all = quoted(&format!("x{}{}{}", ch(233), ch(256), ch(119070)));
+    // x, U+00E9, U+00FF (the last Latin-1 character), U+0100, U+1D11E
+    let text = "codepoints-to-string((120, 233, 255, 256, 119070))";
+    let all = quoted(&format!("x{}{}{}{}", ch(233), ch(255), ch(256), ch(119070)));
     assert_eq!(json(text, ""), all);
-    for encoding in ["utf-8", "UTF-8", "UTF-16", "utf-32"] {
+    for encoding in [
+        "utf-8", "UTF-8", "UTF-16", "UTF-16BE", "UTF-16LE", "utf-32", "UTF-32", "UTF-32BE",
+        "UTF-32LE",
+    ] {
         let params = format!("'encoding':'{encoding}'");
         assert_eq!(json(text, &params), all, "{encoding}");
     }
     let pair = format!("{}{}", esc("D834"), esc("DD1E"));
-    let ascii = quoted(&format!("x{}{}{pair}", esc("00E9"), esc("0100")));
-    for encoding in ["US-ASCII", "us-ascii", "ASCII"] {
+    let ascii = quoted(&format!(
+        "x{}{}{}{pair}",
+        esc("00E9"),
+        esc("00FF"),
+        esc("0100")
+    ));
+    for encoding in [
+        "US-ASCII",
+        "us-ascii",
+        "ASCII",
+        "ISO646-US",
+        "ANSI_X3.4-1968",
+    ] {
         let params = format!("'encoding':'{encoding}'");
         assert_eq!(json(text, &params), ascii, "{encoding}");
     }
-    let latin1 = quoted(&format!("x{}{}{pair}", ch(233), esc("0100")));
-    for encoding in ["ISO-8859-1", "iso-8859-1", "latin1"] {
+    let latin1 = quoted(&format!("x{}{}{}{pair}", ch(233), ch(255), esc("0100")));
+    for encoding in [
+        "ISO-8859-1",
+        "iso-8859-1",
+        "ISO_8859-1",
+        "ISO8859-1",
+        "L1",
+        "latin1",
+        "LATIN1",
+    ] {
         let params = format!("'encoding':'{encoding}'");
         assert_eq!(json(text, &params), latin1, "{encoding}");
     }
+    // The Latin-1 bound on its own: U+00FF is written as itself under
+    // ISO-8859-1 and escaped under US-ASCII.
+    let y = "codepoints-to-string(255)";
+    assert_eq!(
+        json(y, "'encoding':'ISO-8859-1'"),
+        quoted(&ch(255).to_string())
+    );
+    assert_eq!(json(y, "'encoding':'US-ASCII'"), quoted(&esc("00FF")));
     // Keys and node output too.
     assert_eq!(
         json("map{codepoints-to-string(233):1}", "'encoding':'US-ASCII'"),
@@ -358,9 +403,13 @@ fn test_encoding_escapes_what_it_cannot_represent() {
     );
 }
 
+// §3 only asks for printable ASCII (and SHOULD for a registered charset
+// name), so these are valid values the JSON method does not support. The
+// empty string holds no character outside #x21-#x7E; it names no charset,
+// and is SESU0007 like any other name Xee does not know.
 #[test]
 fn test_unsupported_encoding_is_sesu0007() {
-    for encoding in ["EBCDIC-US", "x-unknown", ""] {
+    for encoding in ["EBCDIC-US", "x-unknown", "", "!~"] {
         for arg in ["'a'", "1", "()"] {
             let params = format!("'encoding':'{encoding}'");
             assert_eq!(
@@ -417,28 +466,55 @@ fn test_normalization_form() {
     );
 }
 
-// SERE0022 compares the keys' string values (§9); normalization is part of
-// writing a key as a JSON string. So keys that only become equal under NFC
-// are not SERE0022, and the output names the member twice.
+// §3 defines allow-duplicate-names by the serialized JSON object, and §9
+// normalizes a key before it is written. So keys that only become equal
+// under the normalization form are SERE0022 as well, and the output never
+// holds a member name twice, which parse-json would reject under
+// duplicates: reject.
 #[test]
-fn test_duplicate_names_are_checked_before_normalization() {
+fn test_duplicate_names_are_checked_after_normalization() {
+    // U+00E9, and e followed by U+0301: equal under every normalization form
     let arg = "map{codepoints-to-string(233):1, concat('e', codepoints-to-string(769)):2}";
-    let out = json(arg, "'normalization-form':'NFC'");
-    assert_eq!(out.matches(ch(233)).count(), 2, "{out}");
-    assert_eq!(
-        error_of(&format!(
-            "parse-json({}, map{{'duplicates':'reject'}})",
-            json_expr(arg, "'normalization-form':'NFC'")
-        )),
-        ErrorValue::FOJS0003
+    for form in ["NFC", "NFD", "NFKC", "NFKD"] {
+        for allow in ["", ",'allow-duplicate-names':false()"] {
+            let params = format!("'normalization-form':'{form}'{allow}");
+            assert_eq!(json_error(arg, &params), ErrorValue::SERE0022, "{params}");
+        }
+    }
+    // Allowed, both members are written, the name U+00E9 twice.
+    let out = json(
+        arg,
+        "'normalization-form':'NFC','allow-duplicate-names':true()",
     );
-    let out = json(arg, "");
-    assert_eq!(out.matches(ch(233)).count(), 1, "{out}");
+    let e = ch(233);
+    assert!(
+        out == format!(r#"{{"{e}":1,"{e}":2}}"#) || out == format!(r#"{{"{e}":2,"{e}":1}}"#),
+        "{out}"
+    );
+    // Without normalization the names differ: no error, U+00E9 once, and
+    // the output reads back under duplicates: reject.
+    for params in ["", "'normalization-form':'none'"] {
+        let out = json(arg, params);
+        assert_eq!(out.matches(e).count(), 1, "{out}");
+        assert_eq!(out.matches(ch(769)).count(), 1, "{out}");
+        assert_true(&format!(
+            "map:size(parse-json({}, map{{'duplicates':'reject'}})) eq 2",
+            json_expr(arg, params)
+        ));
+    }
+    // Keys with the same string value stay SERE0022 under every form.
+    let same = "map{xs:QName(concat('e', codepoints-to-string(769))):1, \
+                concat('e', codepoints-to-string(769)):2}";
+    for form in ["none", "NFC", "NFD", "NFKC", "NFKD"] {
+        let params = format!("'normalization-form':'{form}'");
+        assert_eq!(json_error(same, &params), ErrorValue::SERE0022, "{form}");
+    }
 }
 
+// Valid NMTOKENs (§3) that the JSON method does not support (§9.1.9).
 #[test]
 fn test_unsupported_normalization_form_is_sesu0011() {
-    for form in ["fully-normalized", "nfc", "NFX", ""] {
+    for form in ["fully-normalized", "nfc", "NFX", "1", "a:b.c-d"] {
         for arg in ["'a'", "1", "()"] {
             let params = format!("'normalization-form':'{form}'");
             assert_eq!(
@@ -448,6 +524,67 @@ fn test_unsupported_normalization_form_is_sesu0011() {
             );
         }
     }
+}
+
+// §3: normalization-form is an NMTOKEN and encoding a string of printable
+// ASCII (#x21-#x7E); F&O 3.1 fn:serialize: a value that breaks these rules
+// is SEPM0016. It is checked when the parameters are read, so it holds for
+// every output method, whether or not the method uses the parameter.
+#[test]
+fn test_values_outside_the_parameter_domain_are_sepm0016() {
+    let forms = [
+        "''",
+        "'a b'",
+        "'a,b'",
+        // an xs:NMTOKEN value holds no whitespace
+        "' NFC'",
+        "concat('NFC', codepoints-to-string(9))",
+    ];
+    let encodings = [
+        "'a b'",
+        "' utf-8'",
+        "concat('utf-8', codepoints-to-string(9))",
+        "concat('utf-8', codepoints-to-string(233))",
+        // U+007F, just past the range
+        "concat('utf-8', codepoints-to-string(127))",
+    ];
+    let params = forms
+        .iter()
+        .map(|form| format!("'normalization-form':{form}"))
+        .chain(
+            encodings
+                .iter()
+                .map(|encoding| format!("'encoding':{encoding}")),
+        );
+    for param in params {
+        for method in [
+            "'method':'json',",
+            "'method':'xml',",
+            "'method':'text',",
+            "",
+        ] {
+            for arg in ["'a'", "1", "()"] {
+                let expr = format!("serialize({arg}, map{{{method}{param}}})");
+                assert_eq!(error_of(&expr), ErrorValue::SEPM0016, "{expr}");
+            }
+        }
+    }
+    // The ends of the encoding range, and an NMTOKEN with a character
+    // outside ASCII, are inside the domains: the xml method, which applies
+    // neither parameter, serializes.
+    for param in [
+        "'encoding':'!~'",
+        "'normalization-form':concat('NF', codepoints-to-string(233))",
+    ] {
+        assert_true(&format!("serialize('a', map{{{param}}}) eq 'a'"));
+    }
+    assert_eq!(
+        json_error(
+            "'a'",
+            "'normalization-form':concat('NF', codepoints-to-string(233))"
+        ),
+        ErrorValue::SESU0011
+    );
 }
 
 #[test]

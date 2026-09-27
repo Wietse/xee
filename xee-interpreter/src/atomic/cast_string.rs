@@ -30,6 +30,13 @@ static NMTOKEN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     )
     .expect("Invalid regex")
 });
+
+/// Whether `s` is, as it stands, a string in the value space of xs:NMTOKEN
+/// (XML 1.1 `Nmtoken`). No whitespace is collapsed first.
+pub(crate) fn is_nmtoken(s: &str) -> bool {
+    NMTOKEN_REGEX.is_match(s)
+}
+
 // Name	   ::=   	NameStartChar (NameChar)*
 static NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     // we have to add the colon for NAME_START_CHAR / NAME_CHAR

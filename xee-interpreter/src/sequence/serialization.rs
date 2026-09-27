@@ -90,6 +90,7 @@ impl SerializationParameters {
         let doctype_system = c.option("doctype-system", Xs::String)?;
 
         let encoding = c.option_with_default("encoding", Xs::String, "utf-8".to_string())?;
+        check_encoding_domain(&encoding)?;
 
         let escape_uri_attributes =
             c.option_with_default("escape-uri-attributes", Xs::Boolean, true)?;
@@ -126,6 +127,7 @@ impl SerializationParameters {
         check_method_domain(&json_node_output_method, &["xml", "xhtml", "html", "text"])?;
 
         let normalization_form = c.option("normalization-form", Xs::String)?;
+        check_normalization_form_domain(normalization_form.as_deref())?;
 
         let omit_xml_declaration =
             c.option_with_default("omit-xml-declaration", Xs::Boolean, true)?;
@@ -233,6 +235,38 @@ fn check_method_domain(value: &QNameOrString, names: &[&str]) -> error::Result<(
     }
 }
 
+// Serialization 3.1 §3: the value of `encoding` is "a string of Unicode
+// characters in the range #x21 to #x7E". F&O 3.1 fn:serialize: a value of
+// the right type that breaks the rules [Serialization 3.1] sets for its
+// parameter is SEPM0016. Like the method domains, this is checked when the
+// parameters are read, for every output method, whether or not the method
+// uses the parameter. The empty string has no character outside the range,
+// so it is not rejected here; it names no charset, and the JSON method
+// reports it as an encoding it does not support (SESU0007, §9.1.3), like
+// any other name it does not know.
+fn check_encoding_domain(encoding: &str) -> error::Result<()> {
+    if encoding.chars().all(|c| ('\x21'..='\x7E').contains(&c)) {
+        Ok(())
+    } else {
+        Err(error::Error::SEPM0016)
+    }
+}
+
+// Serialization 3.1 §3: `normalization-form` is NFC, NFD, NFKC, NFKD,
+// fully-normalized or none, "or an implementation-defined value of type
+// NMTOKEN". Each enumerated value is an NMTOKEN, so a value that is not one
+// (the empty string, or one holding a space or a comma) is invalid for the
+// parameter: SEPM0016 (F&O 3.1 fn:serialize), checked when the parameters
+// are read, for every output method. A valid value the method does not
+// support stays SESU0011 (§9.1.9 for JSON). The value is tested as it
+// stands, without collapsing whitespace: a value of xs:NMTOKEN holds none.
+fn check_normalization_form_domain(form: Option<&str>) -> error::Result<()> {
+    match form {
+        Some(form) if !atomic::is_nmtoken(form) => Err(error::Error::SEPM0016),
+        _ => Ok(()),
+    }
+}
+
 fn serialize_xml(
     arg: &Sequence,
     parameters: SerializationParameters,
@@ -308,15 +342,19 @@ fn serialize_text(
 // - Numbers are written as their canonical xs:string form (F&O 3.1
 //   §19.1.2), which keeps xs:integer and xs:decimal values exact; §9 allows
 //   any RFC 8259 form.
-// - Map members are written in the map's order. Keys with the same string
-//   value are SERE0022 unless allow-duplicate-names is true, in which case
-//   both members are written.
+// - Map members are written in the map's order. Two keys of one map that
+//   are written as the same string, after normalization, are SERE0022
+//   unless allow-duplicate-names is true, in which case both members are
+//   written (see `JsonSerializer::map`).
 // - `indent` selects the writer's indented layout.
 // - `encoding` gives the writer its "is encodable" predicate (§9.1.3); an
-//   encoding Xee does not know is SESU0007. Since every character can be
+//   encoding Xee does not know is SESU0007 (a value outside the §3 domain
+//   is SEPM0016 already, see `from_map`). Since every character can be
 //   escaped, SERE0008 cannot arise.
 // - `normalization-form` is applied to each string, keys and node output
-//   included, before it is escaped (§9, §9.1.9).
+//   included, before it is escaped (§9, §9.1.9). A valid form Xee does not
+//   support is SESU0011 (a value that is not an NMTOKEN is SEPM0016
+//   already, see `from_map`).
 // - Not implemented: character maps (§11). `use-character-maps` is not read
 //   from the parameter map (see `from_map`); the writer's verbatim string
 //   parts are there for it.
@@ -382,7 +420,9 @@ fn is_latin1(c: char) -> bool {
 /// The `normalization-form` parameter for the JSON output method
 /// (Serialization 3.1 §9.1.9). NFC and none are required; NFD, NFKC and
 /// NFKD are also supported. The values are the names §3 enumerates, as
-/// written; `fully-normalized` and any other value are SESU0011.
+/// written; `fully-normalized` and any other value are SESU0011 here
+/// (`from_map` has already refused a value that is not an NMTOKEN with
+/// SEPM0016).
 enum Normalization {
     None,
     Composing(ComposingNormalizer),
@@ -472,11 +512,6 @@ impl JsonSerializer<'_> {
         self.writer.string(&s).map_err(write_error)
     }
 
-    fn key(&mut self, s: &str) -> error::Result<()> {
-        let s = self.normalization.apply(s);
-        self.writer.key(&s).map_err(write_error)
-    }
-
     fn node(&mut self, node: xot::Node, xot: &mut Xot) -> error::Result<()> {
         // from_map already rejects values outside the parameter's domain;
         // this guards hand-built parameters, where `json` would recurse.
@@ -509,14 +544,26 @@ impl JsonSerializer<'_> {
 
     fn map(&mut self, map: &function::Map, xot: &mut Xot) -> error::Result<()> {
         self.writer.start_object().map_err(write_error)?;
-        // §9: keys are compared by their string value, before normalization.
+        // §9 raises SERE0022 for keys with the same string value, and §3
+        // defines allow-duplicate-names by the serialized object: "whether a
+        // map item serialized as a JSON object ... is allowed to contain
+        // duplicate member names". So a key is compared as it is written,
+        // after Unicode normalization (§9 orders normalization before
+        // escaping): two keys that only become equal under the normalization
+        // form are SERE0022 too, as otherwise the output would hold a name
+        // twice, which parse-json rejects under `duplicates: reject`. Keys
+        // equal before normalization stay equal after it, since it is a
+        // function. Escaping for the encoding is one-to-one, so the escaped
+        // text need not be compared. Character maps, which §9 applies first,
+        // are not implemented (see `serialize_json`). Each map has its own
+        // set: the same name in a sibling or a nested map is no duplicate.
         let mut names = HashSet::default();
         for (key, value) in map.entries() {
-            let name = key.string_value();
+            let name = self.normalization.apply(&key.string_value()).into_owned();
             if !self.parameters.allow_duplicate_names && !names.insert(name.clone()) {
                 return Err(error::Error::SERE0022);
             }
-            self.key(&name)?;
+            self.writer.key(&name).map_err(write_error)?;
             self.sequence(value, xot)?;
         }
         self.writer.end_object().map_err(write_error)
@@ -546,6 +593,83 @@ mod tests {
     use crate::{atomic, sequence};
 
     use super::*;
+
+    fn completed_serializer(parameters: &SerializationParameters) -> JsonSerializer<'_> {
+        let mut serializer = JsonSerializer {
+            writer: Writer::new(Layout::Compact, EscapeProfile::Serialization),
+            parameters,
+            normalization: Normalization::None,
+        };
+        serializer.writer.null().unwrap();
+        serializer
+    }
+
+    // The serializer's own INF/NaN guard, apart from the writer's refusal of
+    // the number text. This writer has completed its one value, so it
+    // refuses any further value as misuse before it looks at the number text
+    // (FOER0000 through `write_error`), never as InvalidNumber: SERE0020 can
+    // then only come from the guard.
+    #[test]
+    fn test_infinity_and_nan_guard_alone_is_sere0020() {
+        let parameters = SerializationParameters::new();
+        let values: [atomic::Atomic; 6] = [
+            f64::INFINITY.into(),
+            f64::NEG_INFINITY.into(),
+            f64::NAN.into(),
+            f32::INFINITY.into(),
+            f32::NEG_INFINITY.into(),
+            f32::NAN.into(),
+        ];
+        for value in values {
+            let mut serializer = completed_serializer(&parameters);
+            assert_eq!(
+                serializer.atomic(&value),
+                Err(error::Error::SERE0020),
+                "{value:?}"
+            );
+        }
+        // Control: past the guard, the same writer refuses a finite number
+        // as misuse.
+        let finite: [atomic::Atomic; 2] = [1.5f64.into(), 1.5f32.into()];
+        for value in finite {
+            let mut serializer = completed_serializer(&parameters);
+            assert_eq!(
+                serializer.atomic(&value),
+                Err(error::Error::FOER0000),
+                "{value:?}"
+            );
+        }
+    }
+
+    // The second layer: a number text the writer refuses is SERE0020, and
+    // every other refusal is FOER0000.
+    #[test]
+    fn test_write_error_maps_only_invalid_number_to_sere0020() {
+        let mut writer = Writer::new(Layout::Compact, EscapeProfile::Serialization);
+        for text in ["INF", "-INF", "NaN"] {
+            assert_eq!(
+                writer.number(text),
+                Err(WriteError::InvalidNumber),
+                "{text}"
+            );
+        }
+        assert_eq!(
+            write_error(WriteError::InvalidNumber),
+            error::Error::SERE0020
+        );
+        for other in [
+            WriteError::ValueWithoutKey,
+            WriteError::UnexpectedKey,
+            WriteError::KeyWithoutValue,
+            WriteError::MismatchedClose,
+            WriteError::SecondTopLevelValue,
+            WriteError::StringOpen,
+            WriteError::NoStringOpen,
+            WriteError::Incomplete,
+        ] {
+            assert_eq!(write_error(other), error::Error::FOER0000, "{other:?}");
+        }
+    }
 
     #[test]
     fn test_allow_duplicate_names_true() {

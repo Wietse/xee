@@ -10,6 +10,7 @@ use crate::atomic;
 use crate::error;
 
 use super::cast_binary::cast_binary_arithmetic;
+use super::cast_numeric::exact_decimal;
 use super::op_div::{op_div_decimal, op_div_float};
 
 pub(crate) fn op_idiv(a: atomic::Atomic, b: atomic::Atomic) -> error::Result<atomic::Atomic> {
@@ -52,8 +53,11 @@ where
     }
 
     let v = op_div_float(a, b);
-    let v: i128 = v.trunc().to_i128().ok_or(error::Error::FOAR0002)?;
-    let i: IBig = v.into();
+    if v.is_infinite() {
+        return Err(error::Error::FOAR0002);
+    }
+    // The truncated quotient is an integer, exactly representable as one.
+    let (i, _) = exact_decimal(v.trunc());
     Ok(i.into())
 }
 

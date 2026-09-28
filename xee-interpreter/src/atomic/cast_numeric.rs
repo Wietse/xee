@@ -355,30 +355,8 @@ impl atomic::Atomic {
                 .parse::<Parsed<V>>()
                 .map_err(|_| error::Error::FORG0001)?
                 .into_inner()),
-            atomic::Atomic::Float(OrderedFloat(f)) => {
-                if f.is_nan() | f.is_infinite() {
-                    return Err(error::Error::FOCA0002);
-                }
-                // we first go to a decimal. Any larger number we won't be able to
-                // express, even though bigint strictly speaking could handle it.
-                // But converting a float to a bigint directly isn't possible.
-                let d: Decimal = f.trunc().try_into().map_err(|_| error::Error::FOCA0003)?;
-                let i: i128 = d.try_into().map_err(|_| error::Error::FOCA0003)?;
-                let i: V = i.try_into().map_err(|_| error::Error::FOCA0003)?;
-                Ok(i)
-            }
-            atomic::Atomic::Double(OrderedFloat(d)) => {
-                if d.is_nan() | d.is_infinite() {
-                    return Err(error::Error::FOCA0002);
-                }
-                // we first go to a decimal. Any larger number we won't be able to
-                // express, even though bigint strictly speaking could handle it.
-                // But converting a float to a bigint directly isn't possible.
-                let d: Decimal = d.trunc().try_into().map_err(|_| error::Error::FOCA0003)?;
-                let i: i128 = d.try_into().map_err(|_| error::Error::FOCA0003)?;
-                let i: V = i.try_into().map_err(|_| error::Error::FOCA0003)?;
-                Ok(i)
-            }
+            atomic::Atomic::Float(OrderedFloat(f)) => float_to_integer(f),
+            atomic::Atomic::Double(OrderedFloat(d)) => float_to_integer(d),
             atomic::Atomic::Decimal(d) => decimal_to_integer(d),
             atomic::Atomic::Integer(_, i) => {
                 let i: V = i
@@ -608,6 +586,18 @@ pub(crate) fn exact_decimal<F: Float>(f: F) -> (IBig, usize) {
         let scale = exponent.unsigned_abs() as usize;
         (odd * IBig::from(5).pow(scale), scale)
     }
+}
+
+/// A finite float with its fractional part discarded (F&O 3.1 19.1.2.4),
+/// exactly: the truncated float is an integer, so its exact value has
+/// scale 0. FOCA0003 only when `V` cannot hold it.
+fn float_to_integer<F: Float, V: TryFrom<IBig>>(f: F) -> error::Result<V> {
+    if f.is_nan() || f.is_infinite() {
+        return Err(error::Error::FOCA0002);
+    }
+    let (integer, scale) = exact_decimal(f.trunc());
+    debug_assert_eq!(scale, 0);
+    V::try_from(integer).map_err(|_| error::Error::FOCA0003)
 }
 
 /// The largest scale and coefficient a `Decimal` holds.

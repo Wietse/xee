@@ -7,6 +7,7 @@ use ordered_float::OrderedFloat;
 
 use xee_name::Name;
 
+use super::cast_numeric::exact_decimal;
 use super::{
     Atomic, BinaryType, Duration, GDay, GMonth, GMonthDay, GYear, GYearMonth, ToDateTimeStamp,
 };
@@ -147,22 +148,10 @@ impl MapKey {
                 MapKey::NegativeInfinity
             };
         }
-        // f is sign * mantissa * 2^exponent exactly; -0 and 0 have
-        // mantissa 0
-        let (mantissa, exponent, sign) = f.integer_decode();
-        if mantissa == 0 {
-            return MapKey::Integer(IBig::from(0).into());
-        }
-        let zeros = mantissa.trailing_zeros();
-        let odd = IBig::from(mantissa >> zeros) * IBig::from(sign);
-        let exponent = i32::from(exponent) + zeros as i32;
-        if exponent >= 0 {
-            MapKey::Integer((odd << exponent as usize).into())
+        let (coefficient, scale) = exact_decimal(f);
+        if scale == 0 {
+            MapKey::Integer(coefficient.into())
         } else {
-            // odd / 2^k is odd * 5^k / 10^k, and odd * 5^k is odd, so it
-            // has no trailing zero digit
-            let scale = exponent.unsigned_abs() as usize;
-            let coefficient = odd * IBig::from(5).pow(scale);
             MapKey::Decimal(ExactDecimal { coefficient, scale }.into())
         }
     }

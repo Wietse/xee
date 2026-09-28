@@ -1,7 +1,7 @@
 use std::num::NonZeroI32;
 use std::rc::Rc;
 
-use ibig::{ibig, IBig};
+use ibig::{ibig, ops::UnsignedAbs, IBig, UBig};
 use num_traits::Float;
 use ordered_float::OrderedFloat;
 use rust_decimal::prelude::*;
@@ -183,28 +183,8 @@ impl atomic::Atomic {
             atomic::Atomic::Untyped(s) => Self::parse_atomic::<Decimal>(&whitespace_collapse(&s)),
             atomic::Atomic::String(StringType::AnyURI, _) => Err(error::Error::XPTY0004),
             atomic::Atomic::String(_, s) => Self::parse_atomic::<Decimal>(&whitespace_collapse(&s)),
-            atomic::Atomic::Float(OrderedFloat(f)) => {
-                if f.is_nan() || f.is_infinite() {
-                    return Err(error::Error::FOCA0002);
-                }
-
-                Ok(atomic::Atomic::Decimal(
-                    Decimal::try_from(f)
-                        .map_err(|_| error::Error::FOCA0001)?
-                        .into(),
-                ))
-            }
-            atomic::Atomic::Double(OrderedFloat(f)) => {
-                if f.is_nan() || f.is_infinite() {
-                    return Err(error::Error::FOCA0002);
-                }
-
-                Ok(atomic::Atomic::Decimal(
-                    Decimal::try_from(f)
-                        .map_err(|_| error::Error::FOCA0001)?
-                        .into(),
-                ))
-            }
+            atomic::Atomic::Float(OrderedFloat(f)) => Self::float_to_decimal(f),
+            atomic::Atomic::Double(OrderedFloat(f)) => Self::float_to_decimal(f),
             atomic::Atomic::Decimal(_) => Ok(self.clone()),
             atomic::Atomic::Integer(_, i) => Ok(atomic::Atomic::Decimal(
                 // rust decimal doesn't support arbitrary precision integers,
@@ -227,6 +207,14 @@ impl atomic::Atomic {
             }
             _ => Err(error::Error::XPTY0004),
         }
+    }
+
+    fn float_to_decimal<F: Float>(f: F) -> error::Result<atomic::Atomic> {
+        if f.is_nan() || f.is_infinite() {
+            return Err(error::Error::FOCA0002);
+        }
+        let d = nearest_decimal(f).ok_or(error::Error::FOCA0001)?;
+        Ok(atomic::Atomic::Decimal(d.into()))
     }
 
     pub(crate) fn cast_to_integer(self) -> error::Result<atomic::Atomic> {
@@ -599,9 +587,162 @@ impl FromStr for Parsed<f32> {
     }
 }
 
+/// The exact value of a finite float as `(coefficient, scale)`, that is
+/// `coefficient / 10^scale`. `scale` is 0 for an integer; otherwise the
+/// coefficient has no trailing zero digit, so equal values give equal
+/// parts.
+pub(crate) fn exact_decimal<F: Float>(f: F) -> (IBig, usize) {
+    // f is sign * mantissa * 2^exponent exactly; -0 and 0 have mantissa 0
+    let (mantissa, exponent, sign) = f.integer_decode();
+    if mantissa == 0 {
+        return (IBig::from(0), 0);
+    }
+    let zeros = mantissa.trailing_zeros();
+    let odd = IBig::from(mantissa >> zeros) * IBig::from(sign);
+    let exponent = i32::from(exponent) + zeros as i32;
+    if exponent >= 0 {
+        (odd << exponent as usize, 0)
+    } else {
+        // odd / 2^k is odd * 5^k / 10^k, and odd * 5^k is odd, so it has
+        // no trailing zero digit
+        let scale = exponent.unsigned_abs() as usize;
+        (odd * IBig::from(5).pow(scale), scale)
+    }
+}
+
+/// The largest scale and coefficient a `Decimal` holds.
+const DECIMAL_MAX_SCALE: usize = 28;
+const DECIMAL_MAX_COEFFICIENT: u128 = (1 << 96) - 1;
+
+/// The xs:decimal for a finite float (F&O 3.1 19.1.2.3): of the values a
+/// `Decimal` can hold, the one numerically closest to it, and on a tie the
+/// one closer to zero. `None` if the float is beyond the largest.
+///
+/// A float's exact decimal expansion runs to hundreds of digits, so this
+/// is the nearest of the candidates at every scale: at each scale, the
+/// largest holdable value at or below the magnitude and the smallest at or
+/// above it. The coefficient cap makes the finer scales run out near the
+/// top of each scale's range, which is why a coarser scale can win.
+fn nearest_decimal<F: Float>(f: F) -> Option<Decimal> {
+    let (coefficient, scale) = exact_decimal(f);
+    let negative = coefficient < IBig::from(0);
+    let magnitude = coefficient.unsigned_abs();
+    let max = UBig::from(DECIMAL_MAX_COEFFICIENT);
+    let pow10 = |n: usize| UBig::from(10u8).pow(n);
+    // Every value compared at the common denominator 10^common.
+    let common = scale.max(DECIMAL_MAX_SCALE);
+    let at_common = |m: &UBig, s: usize| m * pow10(common - s);
+    let value = at_common(&magnitude, scale);
+    let mut below: Option<(UBig, usize)> = None;
+    let mut above: Option<(UBig, usize)> = None;
+    for s in 0..=DECIMAL_MAX_SCALE {
+        let (floor, exact) = if s >= scale {
+            (&magnitude * pow10(s - scale), true)
+        } else {
+            let divisor = pow10(scale - s);
+            (
+                &magnitude / &divisor,
+                (&magnitude % &divisor) == UBig::from(0u8),
+            )
+        };
+        let ceiling = if exact {
+            floor.clone()
+        } else {
+            &floor + UBig::from(1u8)
+        };
+        let low = floor.min(max.clone());
+        // Strictly greater (and below, strictly less) keeps the coarsest
+        // scale among equal candidates.
+        if below
+            .as_ref()
+            .is_none_or(|(m, t)| at_common(&low, s) > at_common(m, *t))
+        {
+            below = Some((low, s));
+        }
+        if ceiling <= max
+            && above
+                .as_ref()
+                .is_none_or(|(m, t)| at_common(&ceiling, s) < at_common(m, *t))
+        {
+            above = Some((ceiling, s));
+        }
+    }
+    // Scale 0 always gives a value below. A value above exists at some
+    // scale exactly when the magnitude is at most the largest decimal, so
+    // without one the float is too large.
+    let (below, above) = (below?, above?);
+    let below_distance = &value - at_common(&below.0, below.1);
+    let above_distance = at_common(&above.0, above.1) - &value;
+    let (m, s) = if below_distance <= above_distance {
+        below
+    } else {
+        above
+    };
+    let m = i128::try_from(u128::try_from(&m).ok()?).ok()?;
+    let m = if negative { -m } else { m };
+    Some(Decimal::from_i128_with_scale(m, s as u32))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // At 1e-11 and above, the nearest decimal has at least 17 significant
+    // digits, so it reads back as the same double. The exponents run past
+    // both ends: below 1e-11, and beyond the largest decimal (2^96).
+    #[test]
+    fn test_nearest_decimal_reads_back_as_the_same_double() {
+        let mut bits = 0x9E37_79B9_7F4A_7C15u64;
+        let (mut checked, mut tiny, mut too_large) = (0, 0, 0);
+        for exponent in -40i64..=99 {
+            for _ in 0..100 {
+                bits = bits
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let sign = bits & (1 << 63);
+                let mantissa = (bits >> 11) & ((1 << 52) - 1);
+                let biased = ((1023 + exponent) as u64) << 52;
+                let value = f64::from_bits(sign | biased | mantissa);
+                if value.abs() < 1e-11 {
+                    tiny += 1;
+                    continue;
+                }
+                let Some(d) = nearest_decimal(value) else {
+                    assert!(value.abs() > 7.9e28, "{value:e} has no decimal");
+                    too_large += 1;
+                    continue;
+                };
+                assert_eq!(
+                    d.to_string().parse::<f64>().unwrap(),
+                    value,
+                    "{value:e} as {d}"
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked > 10_000, "{checked}");
+        assert!(tiny > 0 && too_large > 0, "{tiny} {too_large}");
+    }
+
+    // The value alone does not show the scale, but a host that takes the
+    // Decimal out sees it: the result has the fewest fraction digits that
+    // give the nearest value.
+    #[test]
+    fn test_nearest_decimal_has_the_coarsest_scale() {
+        for (value, mantissa, scale) in [
+            (2.75f64, 275, 2),
+            (-2.75, -275, 2),
+            (1e28, 9999999999999999583119736832, 0),
+            // rounds up to 1e-27, which scale 28 would write as 10e-28
+            (9.99999999999999e-28, 1, 27),
+            (0.5, 5, 1),
+        ] {
+            let d = nearest_decimal(value).unwrap();
+            assert_eq!((d.mantissa(), d.scale()), (mantissa, scale), "{value:e}");
+        }
+        let d = nearest_decimal(0.25f32).unwrap();
+        assert_eq!((d.mantissa(), d.scale()), (25, 2));
+    }
 
     use ibig::ibig;
     use rust_decimal_macros::dec;

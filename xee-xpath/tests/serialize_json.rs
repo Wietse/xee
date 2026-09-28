@@ -216,12 +216,19 @@ fn test_numbers_keep_their_exact_text() {
     assert_eq!(json("1.5e30", ""), "1.5E30");
     assert_eq!(json("12.34e-30", ""), "1.234E-29");
     assert_eq!(json("1e6", ""), "1.0E6");
+    // Doubles keep every digit they need to read back.
+    assert_eq!(json("1.0000000000000002e0", ""), "1.0000000000000002");
+    assert_eq!(json("0.10000000000000002e0", ""), "0.10000000000000002");
+    assert_eq!(json("123456.78901234567e0", ""), "123456.78901234567");
     // Every one reads back as the same value.
     for arg in [
         "xs:integer('-1000000000000000000000000000000')",
         "12345678901234567.89",
         "1.5e30",
         "-0e0",
+        "1.0000000000000002e0",
+        "0.10000000000000002e0",
+        "123456.78901234567e0",
     ] {
         assert_true(&format!(
             "let $v := {arg} return parse-json({}) eq $v",

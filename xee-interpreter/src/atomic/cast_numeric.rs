@@ -18,21 +18,25 @@ impl atomic::Atomic {
     pub(crate) fn canonical_float<F>(f: F) -> String
     where
         F: Float
-            + TryInto<Decimal, Error = rust_decimal::Error>
+            + std::fmt::Display
             + lexical::ToLexicalWithOptions<Options = lexical::WriteFloatOptions>
             + num::Signed,
     {
         // https://www.w3.org/TR/xpath-functions-31/#casting-to-string
-        // If SV has an absolute value that is greater than or equal to
-        // 0.000001 (one millionth) and less than 1000000 (one
-        // million), then the value is converted to an xs:decimal and
-        // the resulting xs:decimal is converted to an xs:string
+        // The result must cast back to a value equal to SV. If SV has an
+        // absolute value that is greater than or equal to 0.000001 (one
+        // millionth) and less than 1000000 (one million), then the value
+        // is converted to an xs:decimal and the resulting xs:decimal is
+        // converted to an xs:string
         let abs_f = f.abs();
         let minimum: F = num::cast(0.000001).unwrap();
         let maximum: F = num::cast(1000000.0).unwrap();
         if abs_f >= minimum && abs_f < maximum {
-            // TODO: is this the right conversion?
-            let d: Decimal = f.try_into().unwrap();
+            // `Display` writes the shortest digits that round-trip, never
+            // in exponent form; in this range they fit a Decimal exactly.
+            // Converting the float itself (`TryInto<Decimal>`) rounds to
+            // fewer digits, so 1.0000000000000002 came out as "1".
+            let d: Decimal = f.to_string().parse().unwrap();
             atomic::Atomic::Decimal(d.into()).into_canonical()
         } else {
             if f.is_zero() {

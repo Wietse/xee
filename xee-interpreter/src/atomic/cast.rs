@@ -405,6 +405,126 @@ mod tests {
         );
     }
 
+    // F&O 3.1 19.1.2.2: the string must cast back to an equal value, so
+    // the decimal form keeps every digit the double needs.
+    #[test]
+    fn test_canonical_double_keeps_the_digits_it_needs() {
+        for (value, text) in [
+            (1.0000000000000002, "1.0000000000000002"),
+            (0.10000000000000002, "0.10000000000000002"),
+            (123456.78901234567, "123456.78901234567"),
+            (-999999.9999999999, "-999999.9999999999"),
+            (0.0000010000000000000002, "0.0000010000000000000002"),
+        ] {
+            assert_eq!(
+                atomic::Atomic::Double(OrderedFloat(value)).into_canonical(),
+                text
+            );
+        }
+        // xs:float needs its own digits too: a Decimal conversion wrote
+        // these as "999999.9" and "0.0000010000993".
+        for (value, text) in [
+            (1.0000001f32, "1.0000001"),
+            (999999.94f32, "999999.94"),
+            (1.0000992e-6f32, "0.0000010000992"),
+        ] {
+            assert_eq!(
+                atomic::Atomic::Float(OrderedFloat(value)).into_canonical(),
+                text
+            );
+        }
+    }
+
+    // The decimal form starts at one millionth inclusive and stops below
+    // one million, both on the absolute value; the ulp on the other side
+    // of each edge takes the E form.
+    #[test]
+    fn test_canonical_float_range_edges() {
+        let below = |v: f64| f64::from_bits(v.to_bits() - 1);
+        for (value, text) in [
+            (1e-6, "0.000001"),
+            (below(1e-6), "9.999999999999997E-7"),
+            (-1e-6, "-0.000001"),
+            (1e6, "1.0E6"),
+            (below(1e6), "999999.9999999999"),
+            (-1e6, "-1.0E6"),
+        ] {
+            assert_eq!(
+                atomic::Atomic::Double(OrderedFloat(value)).into_canonical(),
+                text
+            );
+        }
+        let below = |v: f32| f32::from_bits(v.to_bits() - 1);
+        for (value, text) in [
+            (1e-6f32, "0.000001"),
+            (below(1e-6), "9.999999E-7"),
+            (1e6, "1.0E6"),
+            (below(1e6), "999999.94"),
+            (-1e6, "-1.0E6"),
+        ] {
+            assert_eq!(
+                atomic::Atomic::Float(OrderedFloat(value)).into_canonical(),
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn test_canonical_float_round_trips() {
+        // As for doubles below: every binary exponent from 2^-21 to 2^20.
+        let mut bits = 0x9E37_79B9u32;
+        for exponent in -21i32..=20 {
+            for _ in 0..500 {
+                bits = bits.wrapping_mul(1664525).wrapping_add(1013904223);
+                let sign = bits & (1 << 31);
+                // Bits 8-30: an LCG's low bits repeat with short periods.
+                let mantissa = (bits >> 8) & ((1 << 23) - 1);
+                let biased = ((127 + exponent) as u32) << 23;
+                let value = f32::from_bits(sign | biased | mantissa);
+                let text = atomic::Atomic::Float(OrderedFloat(value)).into_canonical();
+                assert_eq!(
+                    atomic::Atomic::parse_float(&text).unwrap(),
+                    value,
+                    "{value:e} was written as {text}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_canonical_double_round_trips() {
+        // Pseudo-random signs and mantissas at every binary exponent from
+        // 2^-21 to 2^20 (the decimal form covers 2^-20 to 2^19), plus the
+        // ulps next to one million and one millionth, where the form
+        // switches.
+        let mut bits = 0x9E37_79B9_7F4A_7C15u64;
+        let mut values = Vec::new();
+        for exponent in -21i64..=20 {
+            for _ in 0..500 {
+                bits = bits
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                let sign = bits & (1 << 63);
+                let mantissa = bits & ((1 << 52) - 1);
+                let biased = ((1023 + exponent) as u64) << 52;
+                values.push(f64::from_bits(sign | biased | mantissa));
+            }
+        }
+        for edge in [1e6f64, 1e-6] {
+            for k in 0..16 {
+                values.push(f64::from_bits(edge.to_bits() - 8 + k));
+            }
+        }
+        for value in values.into_iter().filter(|v| v.is_finite()) {
+            let text = atomic::Atomic::Double(OrderedFloat(value)).into_canonical();
+            assert_eq!(
+                atomic::Atomic::parse_double(&text).unwrap(),
+                value,
+                "{value:e} was written as {text}"
+            );
+        }
+    }
+
     #[test]
     fn test_whitespace_collapse() {
         let s = "\u{20}\u{09}\u{30}\u{0D}\u{0A}\u{30}\u{A0}\u{20}\u{20}";

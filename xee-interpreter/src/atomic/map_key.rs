@@ -2,12 +2,10 @@ use std::rc::Rc;
 
 use chrono::Offset;
 use ibig::IBig;
+use num_traits::Float;
 use ordered_float::OrderedFloat;
-use rust_decimal::Decimal;
 
 use xee_name::Name;
-
-use crate::error;
 
 use super::{
     Atomic, BinaryType, Duration, GDay, GMonth, GMonthDay, GYear, GYearMonth, ToDateTimeStamp,
@@ -25,7 +23,7 @@ pub enum MapKey {
     NegativeInfinity,
     NaN,
     Integer(Rc<IBig>),
-    Decimal(Rc<Decimal>),
+    Decimal(Rc<ExactDecimal>),
     Duration(Rc<Duration>),
     // datetime with timezone don't hash the same, so we convert
     // into a naive datetime
@@ -48,105 +46,124 @@ pub enum MapKey {
 #[cfg(target_arch = "x86_64")]
 static_assertions::assert_eq_size!(MapKey, [u8; 16]);
 
+/// A number that is not an integer, exactly: `coefficient / 10^scale`, with
+/// `scale >= 1` and no trailing zero digit in `coefficient`, so two equal
+/// values always have the same fields.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExactDecimal {
+    coefficient: IBig,
+    scale: usize,
+}
+
 impl MapKey {
-    pub(crate) fn new(atomic: Atomic) -> error::Result<MapKey> {
+    pub(crate) fn new(atomic: Atomic) -> MapKey {
         match &atomic {
             // string types (including AnyURI) and untyped are stored as the same key
-            Atomic::String(_, s) | Atomic::Untyped(s) => Ok(MapKey::String(s.to_string().into())),
-            // floats and doubles are have special handling for NaN and infinity.
-            // Otherwise they are stored as decimals
-            Atomic::Float(OrderedFloat(f)) => {
-                if f.is_nan() {
-                    Ok(MapKey::NaN)
-                } else if f.is_infinite() {
-                    if f.is_sign_positive() {
-                        Ok(MapKey::PositiveInfinity)
-                    } else {
-                        Ok(MapKey::NegativeInfinity)
-                    }
-                } else {
-                    Self::new(atomic.cast_to_decimal()?)
-                }
-            }
-            Atomic::Double(OrderedFloat(f)) => {
-                if f.is_nan() {
-                    Ok(MapKey::NaN)
-                } else if f.is_infinite() {
-                    if f.is_sign_positive() {
-                        Ok(MapKey::PositiveInfinity)
-                    } else {
-                        Ok(MapKey::NegativeInfinity)
-                    }
-                } else {
-                    Self::new(atomic.cast_to_decimal()?)
-                }
-            }
+            Atomic::String(_, s) | Atomic::Untyped(s) => MapKey::String(s.to_string().into()),
+            // op:same-key compares decimals, doubles and floats as exact
+            // decimal numbers, so a double is keyed by its exact value,
+            // not by a rounded decimal
+            Atomic::Float(OrderedFloat(f)) => Self::float(*f),
+            Atomic::Double(OrderedFloat(f)) => Self::float(*f),
             Atomic::Decimal(d) => {
-                // we ensure that any decimals that can be stored
-                // as an integer are stored that way, so they have
-                // the same hash
-                if d.is_integer() {
-                    Self::new(atomic.cast_to_integer()?)
+                // normalize strips trailing zeros, so 1.50 and 1.5 (and a
+                // double of the same value) have the same fields; integral
+                // decimals are keyed as integers
+                let d = d.normalize();
+                let coefficient = IBig::from(d.mantissa());
+                if d.scale() == 0 {
+                    MapKey::Integer(coefficient.into())
                 } else {
-                    Ok(MapKey::Decimal(d.clone()))
+                    MapKey::Decimal(
+                        ExactDecimal {
+                            coefficient,
+                            scale: d.scale() as usize,
+                        }
+                        .into(),
+                    )
                 }
             }
-            Atomic::Integer(_, i) => Ok(MapKey::Integer(i.clone())),
+            Atomic::Integer(_, i) => MapKey::Integer(i.clone()),
 
             // All types of duration as stored the same way, so they
             // can have the same key
-            Atomic::Duration(d) => Ok(MapKey::Duration(d.clone())),
-            Atomic::YearMonthDuration(d) => Ok(MapKey::Duration(
-                Duration::from_year_month(d.clone()).into(),
-            )),
-            Atomic::DayTimeDuration(d) => Ok(MapKey::Duration(
-                Duration::from_day_time(*d.as_ref()).into(),
-            )),
+            Atomic::Duration(d) => MapKey::Duration(d.clone()),
+            Atomic::YearMonthDuration(d) => {
+                MapKey::Duration(Duration::from_year_month(d.clone()).into())
+            }
+            Atomic::DayTimeDuration(d) => {
+                MapKey::Duration(Duration::from_day_time(*d.as_ref()).into())
+            }
             // date times with a timezone are stored as a chrono datetime,
             // or they are stored as a naive datetime
             Atomic::DateTime(d) => {
                 if d.offset.is_some() {
-                    Ok(MapKey::DateTime(
-                        d.to_naive_date_time(chrono::offset::Utc.fix()),
-                    ))
+                    MapKey::DateTime(d.to_naive_date_time(chrono::offset::Utc.fix()))
                 } else {
-                    Ok(MapKey::NaiveDateTime(d.date_time))
+                    MapKey::NaiveDateTime(d.date_time)
                 }
             }
-            Atomic::DateTimeStamp(d) => Ok(MapKey::DateTime(d.naive_local())),
+            Atomic::DateTimeStamp(d) => MapKey::DateTime(d.naive_local()),
             // times and dates with a timezone are stored as a chrono
             // datetime (but separately), or they are stored as a naive
             // time or date
             Atomic::Time(t) => {
                 if t.offset.is_some() {
-                    Ok(MapKey::Time(
-                        t.to_naive_date_time(chrono::offset::Utc.fix()),
-                    ))
+                    MapKey::Time(t.to_naive_date_time(chrono::offset::Utc.fix()))
                 } else {
-                    Ok(MapKey::NaiveTime(t.time))
+                    MapKey::NaiveTime(t.time)
                 }
             }
             Atomic::Date(d) => {
                 if d.offset.is_some() {
-                    Ok(MapKey::Date(
-                        d.to_naive_date_time(chrono::offset::Utc.fix()),
-                    ))
+                    MapKey::Date(d.to_naive_date_time(chrono::offset::Utc.fix()))
                 } else {
-                    Ok(MapKey::NaiveDate(d.date))
+                    MapKey::NaiveDate(d.date)
                 }
             }
             // gregorian objects have hashes that are already okay
-            Atomic::GYearMonth(g) => Ok(MapKey::GYearMonth(g.clone())),
-            Atomic::GYear(g) => Ok(MapKey::GYear(g.clone())),
-            Atomic::GMonthDay(g) => Ok(MapKey::GMonthDay(g.clone())),
-            Atomic::GDay(g) => Ok(MapKey::GDay(g.clone())),
-            Atomic::GMonth(g) => Ok(MapKey::GMonth(g.clone())),
+            Atomic::GYearMonth(g) => MapKey::GYearMonth(g.clone()),
+            Atomic::GYear(g) => MapKey::GYear(g.clone()),
+            Atomic::GMonthDay(g) => MapKey::GMonthDay(g.clone()),
+            Atomic::GDay(g) => MapKey::GDay(g.clone()),
+            Atomic::GMonth(g) => MapKey::GMonth(g.clone()),
             // booleans are stored as themselves
-            Atomic::Boolean(b) => Ok(MapKey::Boolean(*b)),
+            Atomic::Boolean(b) => MapKey::Boolean(*b),
             // binary types are stored as themselves
-            Atomic::Binary(t, b) => Ok(MapKey::Binary(*t, b.to_vec().into())),
+            Atomic::Binary(t, b) => MapKey::Binary(*t, b.to_vec().into()),
             // qnames are stored as themselves
-            Atomic::QName(q) => Ok(MapKey::QName(q.clone())),
+            Atomic::QName(q) => MapKey::QName(q.clone()),
+        }
+    }
+
+    fn float<F: Float>(f: F) -> MapKey {
+        if f.is_nan() {
+            return MapKey::NaN;
+        }
+        if f.is_infinite() {
+            return if f.is_sign_positive() {
+                MapKey::PositiveInfinity
+            } else {
+                MapKey::NegativeInfinity
+            };
+        }
+        // f is sign * mantissa * 2^exponent exactly; -0 and 0 have
+        // mantissa 0
+        let (mantissa, exponent, sign) = f.integer_decode();
+        if mantissa == 0 {
+            return MapKey::Integer(IBig::from(0).into());
+        }
+        let zeros = mantissa.trailing_zeros();
+        let odd = IBig::from(mantissa >> zeros) * IBig::from(sign);
+        let exponent = i32::from(exponent) + zeros as i32;
+        if exponent >= 0 {
+            MapKey::Integer((odd << exponent as usize).into())
+        } else {
+            // odd / 2^k is odd * 5^k / 10^k, and odd * 5^k is odd, so it
+            // has no trailing zero digit
+            let scale = exponent.unsigned_abs() as usize;
+            let coefficient = odd * IBig::from(5).pow(scale);
+            MapKey::Decimal(ExactDecimal { coefficient, scale }.into())
         }
     }
 }
@@ -164,42 +181,103 @@ mod tests {
     fn test_float_and_decimal() {
         let a: Atomic = dec!(1.5).into();
         let b: Atomic = (1.5f32).into();
-        assert_eq!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_eq!(MapKey::new(a), MapKey::new(b));
     }
 
     #[test]
     fn test_float_and_decimal_that_are_integers() {
         let a: Atomic = dec!(1.0).into();
         let b: Atomic = (1.0f32).into();
-        assert_eq!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_eq!(MapKey::new(a), MapKey::new(b));
     }
 
     #[test]
     fn test_float_and_integer() {
         let a: Atomic = dec!(1.0).into();
         let b: Atomic = ibig!(1).into();
-        assert_eq!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_eq!(MapKey::new(a), MapKey::new(b));
     }
 
     #[test]
     fn test_decimal_and_integer() {
         let a: Atomic = dec!(1.0).into();
         let b: Atomic = ibig!(1).into();
-        assert_eq!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_eq!(MapKey::new(a), MapKey::new(b));
+    }
+
+    #[test]
+    fn test_decimal_trailing_zeros() {
+        let a: Atomic = dec!(1.50).into();
+        let b: Atomic = dec!(1.5).into();
+        assert_eq!(MapKey::new(a), MapKey::new(b));
+    }
+
+    #[test]
+    fn test_double_is_keyed_exactly() {
+        // 0.1 as a double is 3602879701896397 / 2^55
+        let key = MapKey::new(0.1f64.into());
+        let coefficient = IBig::from(3602879701896397u64) * IBig::from(5).pow(55);
+        assert_eq!(
+            key,
+            MapKey::Decimal(
+                ExactDecimal {
+                    coefficient,
+                    scale: 55
+                }
+                .into()
+            )
+        );
+        let decimal: Atomic = dec!(0.1).into();
+        assert_ne!(key, MapKey::new(decimal));
+        assert_ne!(key, MapKey::new(0.1f32.into()));
+    }
+
+    #[test]
+    fn test_double_and_decimal_with_the_same_exact_value() {
+        // 2^-20 and -2^-20
+        for (double, decimal) in [
+            (0.00000095367431640625f64, dec!(0.00000095367431640625)),
+            (-0.00000095367431640625f64, dec!(-0.00000095367431640625)),
+            (-2.75f64, dec!(-2.750)),
+        ] {
+            let decimal: Atomic = decimal.into();
+            assert_eq!(MapKey::new(double.into()), MapKey::new(decimal));
+        }
+    }
+
+    #[test]
+    fn test_integral_doubles_are_integers() {
+        assert_eq!(
+            MapKey::new(1e30f64.into()),
+            MapKey::Integer(
+                "1000000000000000019884624838656"
+                    .parse::<IBig>()
+                    .unwrap()
+                    .into()
+            )
+        );
+        assert_eq!(
+            MapKey::new((-6.0f32).into()),
+            MapKey::Integer(IBig::from(-6).into())
+        );
+        assert_eq!(
+            MapKey::new((-0.0f64).into()),
+            MapKey::Integer(IBig::from(0).into())
+        );
     }
 
     #[test]
     fn test_integer_and_bool() {
         let a: Atomic = ibig!(1).into();
         let b: Atomic = true.into();
-        assert_ne!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_ne!(MapKey::new(a), MapKey::new(b));
     }
 
     #[test]
     fn test_string_and_untyped() {
         let a: Atomic = "foo".into();
         let b: Atomic = Atomic::Untyped("foo".into());
-        assert_eq!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_eq!(MapKey::new(a), MapKey::new(b));
     }
 
     #[test]
@@ -223,7 +301,7 @@ mod tests {
         let a: Atomic = Atomic::DateTime(a_date_time.into());
         let b: Atomic = Atomic::DateTime(b_date_time.into());
 
-        assert_eq!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_eq!(MapKey::new(a), MapKey::new(b));
     }
 
     #[test]
@@ -246,7 +324,7 @@ mod tests {
         let a: Atomic = Atomic::DateTime(a_date_time.into());
         let b: Atomic = Atomic::DateTime(b_date_time.into());
 
-        assert_eq!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_eq!(MapKey::new(a), MapKey::new(b));
     }
 
     #[test]
@@ -269,6 +347,6 @@ mod tests {
         let a: Atomic = Atomic::DateTime(a_date_time.into());
         let b: Atomic = Atomic::DateTime(b_date_time.into());
 
-        assert_ne!(MapKey::new(a).unwrap(), MapKey::new(b).unwrap());
+        assert_ne!(MapKey::new(a), MapKey::new(b));
     }
 }

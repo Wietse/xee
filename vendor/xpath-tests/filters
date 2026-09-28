@@ -1667,7 +1667,6 @@ op-numeric-integer-dividemix2args-2
 = op-numeric-unary-minus
 = op-numeric-unary-plus
 = op-same-key
-same-key-007
 = op-string-equal
 = op-string-greater-than
 = op-string-less-than

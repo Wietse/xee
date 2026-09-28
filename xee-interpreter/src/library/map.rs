@@ -149,7 +149,7 @@ fn get(map: function::Map, key: atomic::Atomic) -> sequence::Sequence {
 
 #[xpath_fn("map:find($input as item()*, $key as xs:anyAtomicType) as array(*)")]
 fn find(input: &sequence::Sequence, key: atomic::Atomic) -> error::Result<function::Array> {
-    Ok(find_helper(input, atomic::MapKey::new(key.clone()).unwrap())?.into())
+    Ok(find_helper(input, atomic::MapKey::new(key.clone()))?.into())
 }
 
 fn find_helper(

@@ -21,7 +21,7 @@ impl Map {
             0 => Ok(Self::Empty(EmptyMap)),
             1 => {
                 let (key, value) = entries.into_iter().next().unwrap();
-                let map_key = atomic::MapKey::new(key.clone())?;
+                let map_key = atomic::MapKey::new(key.clone());
                 Ok(Self::One(
                     OneMapValue {
                         map_key,
@@ -195,7 +195,7 @@ impl Map {
         Ok(match self {
             Map::Empty(_) => {
                 // if we add a key to an empty map we get a OneMap
-                let map_key = atomic::MapKey::new(key.clone())?;
+                let map_key = atomic::MapKey::new(key.clone());
                 Map::One(
                     OneMapValue {
                         map_key,
@@ -205,7 +205,7 @@ impl Map {
                 )
             }
             Map::One(one) => {
-                let map_key = atomic::MapKey::new(key.clone())?;
+                let map_key = atomic::MapKey::new(key.clone());
                 if one.0.map_key == map_key {
                     // we merely update the value
                     Map::One(
@@ -237,7 +237,7 @@ impl Map {
             Map::Empty(_) => Map::Empty(EmptyMap),
             Map::One(map) => {
                 for key in keys {
-                    let map_key = atomic::MapKey::new(key?.clone())?;
+                    let map_key = atomic::MapKey::new(key?.clone());
                     if map.0.map_key == map_key {
                         return Ok(Map::Empty(EmptyMap));
                     }
@@ -268,7 +268,7 @@ pub(crate) trait Mappable {
 
     // get a key by atomic
     fn get(&self, key: &atomic::Atomic) -> Option<&sequence::Sequence> {
-        let map_key = atomic::MapKey::new(key.clone()).ok()?;
+        let map_key = atomic::MapKey::new(key.clone());
         self.get_by_map_key(&map_key)
     }
 
@@ -454,7 +454,7 @@ impl ManyMap {
     fn new(entries: Vec<(atomic::Atomic, sequence::Sequence)>) -> error::Result<Self> {
         let mut map = HashMap::new();
         for (key, value) in entries {
-            let map_key = atomic::MapKey::new(key.clone())?;
+            let map_key = atomic::MapKey::new(key.clone());
             if map.contains_key(&map_key) {
                 return Err(error::Error::XQDY0137);
             }
@@ -469,7 +469,7 @@ impl ManyMap {
         value: &sequence::Sequence,
     ) -> error::Result<Self> {
         let mut map = self.0.as_ref().clone();
-        let map_key = atomic::MapKey::new(key.clone())?;
+        let map_key = atomic::MapKey::new(key.clone());
         map.insert(map_key, (key, value.clone()));
         Ok(Self(Rc::new(map)))
     }
@@ -480,7 +480,7 @@ impl ManyMap {
     ) -> error::Result<HashMap<atomic::MapKey, (atomic::Atomic, sequence::Sequence)>> {
         let mut map = self.0.as_ref().clone();
         for key in keys {
-            let map_key = atomic::MapKey::new(key?.clone()).unwrap();
+            let map_key = atomic::MapKey::new(key?.clone());
             map.remove(&map_key);
         }
         Ok(map)

@@ -1731,28 +1731,8 @@ preceding-sibling-1
 K-SeqExprCast-1414
 K2-SeqExprCast-480
 = prod-CastExpr.derived
-cbcl-cast-byte-001
-cbcl-cast-byte-002
 cbcl-cast-gYear-001
 cbcl-cast-gYearMonth-001
-cbcl-cast-int-001
-cbcl-cast-int-002
-cbcl-cast-long-001
-cbcl-cast-long-002
-cbcl-cast-short-001
-cbcl-cast-short-002
-cbcl-cast-unsignedByte-001
-cbcl-cast-unsignedByte-002
-cbcl-cast-unsignedByte-005
-cbcl-cast-unsignedInt-001
-cbcl-cast-unsignedInt-002
-cbcl-cast-unsignedInt-005
-cbcl-cast-unsignedLong-001
-cbcl-cast-unsignedLong-002
-cbcl-cast-unsignedLong-005
-cbcl-cast-unsignedShort-001
-cbcl-cast-unsignedShort-002
-cbcl-cast-unsignedShort-005
 = prod-CastExpr.schema
 = prod-CastableExpr
 CastableAs663
@@ -1762,10 +1742,6 @@ K-SeqExprCastable-34
 K-SeqExprCastable-38
 K2-SeqExprCastable-1
 K2-SeqExprCastable-2
-cbcl-castable-unsignedByte-005
-cbcl-castable-unsignedInt-005
-cbcl-castable-unsignedLong-005
-cbcl-castable-unsignedShort-005
 = prod-Comment
 = prod-CompAttrConstructor
 = prod-CompCommentConstructor

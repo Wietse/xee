@@ -225,19 +225,19 @@ impl atomic::Atomic {
     }
 
     pub(crate) fn cast_to_long(self) -> error::Result<atomic::Atomic> {
-        let i = self.cast_to_integer_value::<i64>()?;
+        let i: i64 = self.cast_to_bounded_integer()?;
         let i: IBig = i.into();
         Ok(atomic::Atomic::Integer(atomic::IntegerType::Long, i.into()))
     }
 
     pub(crate) fn cast_to_int(self) -> error::Result<atomic::Atomic> {
-        let i = self.cast_to_integer_value::<i32>()?;
+        let i: i32 = self.cast_to_bounded_integer()?;
         let i: IBig = i.into();
         Ok(atomic::Atomic::Integer(atomic::IntegerType::Int, i.into()))
     }
 
     pub(crate) fn cast_to_short(self) -> error::Result<atomic::Atomic> {
-        let i = self.cast_to_integer_value::<i16>()?;
+        let i: i16 = self.cast_to_bounded_integer()?;
         let i: IBig = i.into();
         Ok(atomic::Atomic::Integer(
             atomic::IntegerType::Short,
@@ -246,13 +246,13 @@ impl atomic::Atomic {
     }
 
     pub(crate) fn cast_to_byte(self) -> error::Result<atomic::Atomic> {
-        let i = self.cast_to_integer_value::<i8>()?;
+        let i: i8 = self.cast_to_bounded_integer()?;
         let i: IBig = i.into();
         Ok(atomic::Atomic::Integer(atomic::IntegerType::Byte, i.into()))
     }
 
     pub(crate) fn cast_to_unsigned_long(self) -> error::Result<atomic::Atomic> {
-        let i = self.cast_to_integer_value::<u64>()?;
+        let i: u64 = self.cast_to_bounded_integer()?;
         let i: IBig = i.into();
         Ok(atomic::Atomic::Integer(
             atomic::IntegerType::UnsignedLong,
@@ -261,7 +261,7 @@ impl atomic::Atomic {
     }
 
     pub(crate) fn cast_to_unsigned_int(self) -> error::Result<atomic::Atomic> {
-        let i = self.cast_to_integer_value::<u32>()?;
+        let i: u32 = self.cast_to_bounded_integer()?;
         let i: IBig = i.into();
         Ok(atomic::Atomic::Integer(
             atomic::IntegerType::UnsignedInt,
@@ -270,7 +270,7 @@ impl atomic::Atomic {
     }
 
     pub(crate) fn cast_to_unsigned_short(self) -> error::Result<atomic::Atomic> {
-        let i = self.cast_to_integer_value::<u16>()?;
+        let i: u16 = self.cast_to_bounded_integer()?;
         let i: IBig = i.into();
         Ok(atomic::Atomic::Integer(
             atomic::IntegerType::UnsignedShort,
@@ -279,12 +279,34 @@ impl atomic::Atomic {
     }
 
     pub(crate) fn cast_to_unsigned_byte(self) -> error::Result<atomic::Atomic> {
-        let i = self.cast_to_integer_value::<u8>()?;
+        let i: u8 = self.cast_to_bounded_integer()?;
         let i: IBig = i.into();
         Ok(atomic::Atomic::Integer(
             atomic::IntegerType::UnsignedByte,
             i.into(),
         ))
+    }
+
+    /// A cast to a bounded integer type goes to xs:integer first and then
+    /// down to the target, so a value outside the target's range violates
+    /// its facets: FORG0001 (F&O 3.1 19.3.4 and 19.3.3), like the
+    /// sign-restricted types below.
+    fn cast_to_bounded_integer<V: TryFrom<IBig>>(self) -> error::Result<V> {
+        // A string of any length can reach this, and parsing it to IBig
+        // takes more than linear time. A value with more than 20
+        // significant digits is beyond every bounded type (u64::MAX has
+        // 20), and a string that is not a number is FORG0001 as well, so
+        // such a string is FORG0001 without being parsed.
+        let text = match &self {
+            atomic::Atomic::String(StringType::AnyURI, _) => None,
+            atomic::Atomic::String(_, s) | atomic::Atomic::Untyped(s) => Some(s),
+            _ => None,
+        };
+        if text.is_some_and(|s| more_significant_digits_than(s, 20)) {
+            return Err(error::Error::FORG0001);
+        }
+        let i = self.cast_to_integer_value::<IBig>()?;
+        V::try_from(i).map_err(|_| error::Error::FORG0001)
     }
 
     pub(crate) fn cast_to_non_positive_integer(self) -> error::Result<atomic::Atomic> {
@@ -586,6 +608,15 @@ pub(crate) fn exact_decimal<F: Float>(f: F) -> (IBig, usize) {
         let scale = exponent.unsigned_abs() as usize;
         (odd * IBig::from(5).pow(scale), scale)
     }
+}
+
+/// Whether an integer literal has more than `n` digits once whitespace, a
+/// sign and leading zeros are set aside. Anything else counts as digits:
+/// the caller only needs "too long to be a small integer".
+fn more_significant_digits_than(s: &str, n: usize) -> bool {
+    let s = s.trim_matches(|c| matches!(c, ' ' | '\t' | '\n' | '\r'));
+    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
+    s.trim_start_matches('0').len() > n
 }
 
 /// A finite float with its fractional part discarded (F&O 3.1 19.1.2.4),

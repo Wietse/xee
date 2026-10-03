@@ -7,6 +7,6 @@
 # compiled inside xbrlstd-rs with that repo's toolchain, so code here must
 # build on it. A bump is a deliberate commit, with the lint fixes it demands.
 [toolchain]
-channel = "1.97.0"
+channel = "1.98.1"
 components = ["clippy", "rustfmt"]
 profile = "minimal"

@@ -364,11 +364,8 @@ impl<'a> Tokenizer<'a> {
     fn skip_plain(&mut self) {
         let rest = self.input.as_bytes().get(self.pos..).unwrap_or_default();
         let mut skipped = 0;
-        for chunk in rest.chunks_exact(8) {
-            let Ok(word) = <[u8; 8]>::try_from(chunk) else {
-                break;
-            };
-            if word_has_string_special(u64::from_le_bytes(word)) {
+        for word in rest.as_chunks::<8>().0 {
+            if word_has_string_special(u64::from_le_bytes(*word)) {
                 break;
             }
             skipped += 8;

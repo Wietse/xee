@@ -47,7 +47,7 @@ thiserror = { workspace = true }
 xot = { workspace = true }
 lexical = { version = "7.0.4", features = ["format"] }
 hex = "0.4.3"
-base64 = "0.22.1"
+base64 = "0.23.1"
 chrono = { workspace = true }
 icu = { workspace = true }
 icu_provider_adapters = { workspace = true }

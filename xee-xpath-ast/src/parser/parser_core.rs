@@ -677,23 +677,25 @@ where
         .boxed();
 
         // unlike other binary operators, a comparison expression may only
-        // contain a single comparison operator (unless parens are used)
-        let comparison_expr = (string_concat_expr
+        // contain a single comparison operator (unless parens are used).
+        // The left operand is parsed once, with the rest optional: written as
+        // `(left op right).or(left)` it was parsed twice at every nesting
+        // level, making parse time exponential in nesting depth.
+        let comparison_expr = string_concat_expr
             .clone()
-            .then(comparison_operator)
-            .then(string_concat_expr.clone())
-            .map_with(|((left, operator), right), extra| {
-                ast::ExprSingle::Binary(ast::BinaryExpr {
+            .then(comparison_operator.then(string_concat_expr).or_not())
+            .map_with(|(left, rest), extra| match rest {
+                Some((operator, right)) => ast::ExprSingle::Binary(ast::BinaryExpr {
                     operator,
                     left: expr_single_to_path_expr(left),
                     right: expr_single_to_path_expr(right),
                 })
-                .with_span(extra.span())
-            }))
-        .or(string_concat_expr.map_with(|expr, extra| {
-            ast::ExprSingle::Path(expr_single_to_path_expr(expr)).with_span(extra.span())
-        }))
-        .boxed();
+                .with_span(extra.span()),
+                None => {
+                    ast::ExprSingle::Path(expr_single_to_path_expr(left)).with_span(extra.span())
+                }
+            })
+            .boxed();
 
         let and_expr = binary_expr(comparison_expr, Token::And, ast::BinaryOperator::And).boxed();
         let or_expr = binary_expr(and_expr, Token::Or, ast::BinaryOperator::Or).boxed();

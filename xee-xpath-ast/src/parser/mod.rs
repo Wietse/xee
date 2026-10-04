@@ -294,6 +294,56 @@ mod tests {
         assert_ron_snapshot!(ast::ExprSingle::parse("1 + (2 * 3)"));
     }
 
+    // A comparison's left operand used to be parsed twice whenever no
+    // comparison operator followed it, at every nesting level, so parse time
+    // grew 2x per level (4x for a parenthesized argument): `fn:abs((X))`
+    // nested 12 deep took minutes, and input that fails to parse was just as
+    // slow. Each case nests its shape 40 deep around its seed; a re-parse at
+    // every level, of either operand, on input that parses or input that
+    // fails, would be at least 2^40 parses, so this finishes only if parsing
+    // is not exponential. The parse runs on its own thread so a regression
+    // fails instead of hanging the suite. The thread's stack is sized for
+    // debug-build frames at this depth: the test is about time, not stack
+    // depth.
+    #[test]
+    fn test_deep_nesting_parses_without_exponential_backtracking() {
+        // (shape, seed, whether the result parses)
+        const CASES: [(&str, &str, bool); 7] = [
+            ("fn:abs(X)", "1", true),
+            ("fn:abs((X))", "1", true),
+            ("(X)", "1", true),
+            ("fn:concat(X, (2))", "1", true),
+            ("(1 = X)", "1", true),
+            ("(X)", ",", false),
+            ("fn:abs((X))", "1 +", false),
+        ];
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stack_size = 64 * 1024 * 1024;
+        std::thread::Builder::new()
+            .stack_size(stack_size)
+            .spawn(move || {
+                for (shape, seed, _) in CASES {
+                    let mut src = seed.to_string();
+                    for _ in 0..40 {
+                        src = shape.replace('X', &src);
+                    }
+                    tx.send(ast::ExprSingle::parse(&src).is_ok()).unwrap();
+                }
+            })
+            .unwrap();
+        for (shape, seed, parses) in CASES {
+            match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+                Ok(ok) => assert_eq!(ok, parses, "{shape} nested 40 deep around {seed:?}"),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("{shape} nested 40 deep around {seed:?} did not finish within 60 s")
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    panic!("the parse thread panicked on {shape} around {seed:?}")
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_xpath_single_expr() {
         assert_ron_snapshot!(ast::ExprSingle::parse("1 + 2"));

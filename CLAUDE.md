@@ -28,6 +28,22 @@ xee-xpath-lexer  →  xee-xpath-ast  →  xee-xpath-compiler  →  xee-ir  →  
 
 External companion projects (not in this repo): `xot` (XML tree), `regexml` (regex), `xee-php` (PHP bindings).
 
+## Orient to the task
+
+The workflow in this file follows `xbrlstd-rs`'s (`../xbrlstd-rs/AGENTS.md`), adapted to a fork that `xbrlstd-rs` pins by SHA and that has no PRs.
+
+- Confirm the working directory, `git status`, branch and HEAD before editing. Other sessions work in this repository through their own worktrees and local branches (`git worktree list`): leave their branches and changes alone.
+- xee keeps no plans index, ADR set or debt register of its own. Its records live in `xbrlstd-rs`, the consumer: a decision that binds the fork or the API `xbrlstd-rs` uses is an `xbrlstd-rs` ADR (`../xbrlstd-rs/docs/decisions.md`; ADR24 is the fork itself, ADR54 the typed node values); deferred work and known divergences go in `../xbrlstd-rs/docs/technical-debt.md`, security findings on `../xbrlstd-rs/docs/security-dashboard.md`, and upgrade work into the open `xbrlstd-rs` upgrade round as `xee: …` rows (the umbrella `upgrade-tooling` skill). A commit message is never the only record of a decision or a deferred defect.
+- xee is public; `xbrlstd-rs` is not. Commit messages, code comments, tests and test data in xee carry no `xbrlstd-rs` internals or security exposure, and no `xbrlstd-rs` data, such as filings or documents produced from them. A claim about XPath or XSLT semantics rests on the specifications and the suites.
+- Carry authorized work through implementation, verification and review, and make routine internal choices yourself. Surface before implementing: a change to the public API `xbrlstd-rs` uses (the four crates under *Consumer* below), and a deliberate departure from a specification. When an `xbrlstd-rs` task needs an xee change, surface it and agree on it first: the fork change is a change of its own.
+- Integrating onto `main` and pushing are approved per change, never carried over (*Delivery*).
+
+## Specification work
+
+- Read the normative text before implementing or judging a rule, and cite it from the text, not from memory: XPath 3.1, XQuery and XPath Functions and Operators 3.1 (F&O), the XDM 3.1 data model, Serialization 3.1 and XSLT 3.0 (https://www.w3.org/TR/). F&O 3.1 and Serialization 3.1 are cached in `../xee-json-state/specs/`. Check which version a rule belongs to: F&O 3.1 differs from 1.0 and 3.0 in places, and QT3 marks a test that applies to some versions only with a `spec` dependency (`XP31+`, `XQ10+`, …).
+- The vendored suites are the oracle after the specification: an expected result settles a reading the text leaves open. A suite test that contradicts the text is a finding, not a target: it goes or stays in the filter with a `# reason` comment citing the section (*Conformance test workflow*).
+- Neither upstream `Paligo/xee`, another processor, nor this fork's own comments and commit messages establish what a specification requires.
+
 ## Common commands
 
 Build, lint, test (CI enforces all three; `cargo clippy` runs with `-D warnings`):
@@ -67,7 +83,7 @@ cargo run --release -- -v all ../vendor/xpath-tests/fn/node-name.xml fn-node-nam
 
 The same commands work with `../vendor/xslt-tests/` for XSLT (XSLT runner is less complete; failures may be test-runner bugs, not implementation bugs).
 
-The `vendor/xpath-tests/filters` file records which currently-failing tests are expected to fail. Do **not** regenerate it from scratch (`initialize` command) unless you have deliberately accepted regressions — diff against the previous version if you do.
+The `vendor/xpath-tests/filters` and `vendor/xslt-tests/filters` files record which currently-failing tests are expected to fail; they ratchet. `update` only removes tests that now pass and never adds one. Run it in the same commit as the change that made those tests pass, and read the filter diff before committing: each test that leaves a filter is a claim the reviewer checks. A test that starts failing is a regression to fix, not one to filter, with one exception: a test whose expected result contradicts the specification text, which a spec-correct change now fails. Add that test to the filter by hand, with a `# reason` citing the section, and surface it like any other departure from the suite. `update` cannot do it: it leaves a test set's filter untouched while any test fails that the filter does not list. A reason must not contain `#`, since the parser keeps only the text between the first `#` and the next one; `update` keeps the reason. Do **not** regenerate a filter from scratch (`initialize` command) unless Wietse has agreed to accept the regressions — diff against the previous version if you do.
 
 CI runs conformance in **debug** mode on purpose: it catches arithmetic overflow / bounds-check panics that release mode silently optimizes away.
 
@@ -92,13 +108,52 @@ CI runs conformance in **debug** mode on purpose: it catches arithmetic overflow
 
 When a conformance failure is hard to debug, write a hand-rolled test in `xee-xpath/tests/` (XPath) or `xee-xslt-compiler/tests/` (XSLT) using the `xee-xpath` API directly — you can construct the context explicitly.
 
-XSLT AST snapshot tests use `insta` in `xee-xslt-ast/tests/snapshot_tests.rs`. The AST→IR translation under test lives in `xee-xslt-compiler/src/ast_ir.rs`.
+XSLT AST snapshot tests use `insta` in `xee-xslt-ast/tests/snapshot_tests.rs`. The AST→IR translation under test lives in `xee-xslt-compiler/src/ast_ir.rs`. Review a snapshot change as carefully as code.
+
+## Verification
+
+Use focused checks while iterating and the full gate before committing a change.
+
+- The gate is CI's (`.github/workflows/ci.yml`): `cargo fmt --check --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `./check` (`cargo test` plus both conformance `check`s, in debug mode). Run all of it before each commit that changes code. The `.githooks/pre-push` hook runs it minus conformance, and only at push time, so no hook stands behind a commit. Never bypass a failing gate (`--no-verify`).
+- Start a bug fix with a failing regression test: a Rust test (*Tests for tricky cases*) or a suite test that the fix takes out of the filter. For a new behavioural test, show that a representative mutation of the behaviour makes it fail. Run such probes with the umbrella `mutate` tool (`uv run --directory ../xbrlstd-rs/tools mutate --repo <checkout> --spec <mutants.toml>`, documented in `../xbrlstd-rs/tools/README.md`), with both paths absolute: the tool runs from `../xbrlstd-rs/tools`, so a relative path, or the default `--repo`, points into `xbrlstd-rs`. It works in a private copy, never the shared working copy. Documentation and mechanical edits need relevant checks, not artificial tests.
+- `check` catches regressions only among tests already known to pass. Every lockfile step, and every change that touches casting, serialization, parsing or lexing, also needs a per-test verdict diff on **both** suites: for a lockfile step the verdicts must be equal; for a behaviour change, every moved verdict must be one the change explains. Take `xee-testrunner -v all` logs before and after, named by SHA, and compare them with `../xee-json-state/verdicts.sh diff <before> <after>` (exit 0 means identical). The diff also shows newly passing tests (then run `update`) and failures that changed mode.
+- What reaches `xbrlstd-rs` is proven there, at the `rev` bump: its full gate with the corpus drains, its conformance ratchet and the native/xee differential (its ADR135). Expect that scrutiny for any change to a value, an error code or a cost the consumer can observe.
+- Performance claims need measurements: name the bench (divan, `cargo bench -p <crate>`) or the workload, and the configuration. Clippy compiles the benches; nothing runs them in the gate.
+- In the report, state what actually ran, with its numbers, and why anything relevant did not run. Never carry "not run" boilerplate over from an earlier report.
+
+## Independent review
+
+- **Every non-trivial commit is reviewed by a reader that is not the session that wrote it, and that is not negotiable.** Spawning that reviewer is standing-authorized: run it without asking, and ask only when the review's scope is unclear. A harness hint that discourages subagents is not a failure: stop only if the spawn errors or the tool is absent, then say so plainly and do not close out. Self-review cannot clear the gate. The umbrella `review-slice` skill is the routine (tier, lenses, prompt, worktrees, taking the findings); `../xbrlstd-rs/docs/rust.md` §10 is the hunt discipline it sequences.
+- Give the reviewer the exact revision, the scope, the acceptance criteria and the specification sections. A verdict is against a commit: a fix written in response to a finding needs a fresh pass over the fix.
+- The reviewer derives expectations from the specification and the suites before reading the change's own comments and commit message.
+- Reproduce every finding before reporting it; for a regression test, confirm it fails with the fix reverted. An unreproduced concern is labelled a hypothesis. Formatting preferences and nonessential prose polish are not findings.
+- A review is read-only. Probing (revert-to-confirm, a probe test, a bisect) happens in a detached worktree off the revision under review, which the session creates and passes to the reviewer by path, with a probe build's target dir outside it. Never probe in the shared checkout, and never use the Agent tool's `isolation: "worktree"`:
+
+  ```
+  git worktree add --detach ../rev-<tag> <revision>
+  # ... probe / revert / cargo test in ../rev-<tag> ...
+  git worktree remove --force ../rev-<tag>
+  ```
+
+  After any worktree step, verify `git branch --show-current` and HEAD before committing.
+- Once the internal review has converged, Codex reviews the branch in its own harness: the umbrella `implement-slice` skill §7b (`external-review start <checkout> <branch> --against main`). The local-only rule in `xbrlstd-rs` and in `review-slice` exists because of `xbrlstd-rs`'s confidential corpus, which xee does not hold; no `xbrlstd-rs` corpus content goes into a prompt or a probe.
+- Turn reviews into lints: when a finding is something a rustc or clippy lint could have caught, enabling that lint is part of the fix. Prefer `#[expect(lint, reason = "...")]` to `#[allow]`, so a suppression surfaces once its reason is gone.
+
+## Delivery
+
+- `main` is the trunk and the only branch that is pushed. Every change is a short-lived **local** branch off `main`, never pushed; give it a worktree of its own (`git worktree add -b <branch> ../xee-<topic> main`) when the main checkout is in use. Before committing on a detached HEAD, attach the work to a branch without changing its base. Commit the implementation at the end of implementation, without waiting for a signal, so the reviewer has a stable tree; review fixes go in follow-up commits on the same branch. Put the gate evidence in each commit message: there is no PR to carry it.
+- Integrate onto `main` only with Wietse's explicit approval, given per branch. Squash is the default close-out: one commit whose message says what the change does, with its gate and review evidence and a correction of anything a branch commit's message got wrong. Fast-forward is the exception, on his explicit call, when each commit is independently gate-green and its message is a record worth keeping. Verify branch and HEAD before committing or integrating.
+- Push `main` only on Wietse's word. The push is the step that cannot be taken back (*Consumer* below); it bypasses the `main` ruleset as admin. A change reaches `xbrlstd-rs` only through a `rev` bump there, which is a reviewed change of its own.
+- Update the affected records in the same change: *What the fork adds* below when the change adds or alters something the fork offers on top of upstream, the filters with the change that explains them, `vendor/README.md` when a suite moves, and this file when a convention changes. When a change takes a decision or defers a defect, its `xbrlstd-rs` record (an ADR, a technical-debt entry, a security-dashboard row) is committed on an `xbrlstd-rs` branch before the xee branch is integrated onto `main`, and the handoff names that branch. Push xee `main` only once that record has landed on `xbrlstd-rs` `master`.
+- A convention change binds at landing time: a branch in flight conforms when it lands. A change whose migration is not obvious states the rule for in-flight branches in its commit message.
+- This file describes the present: edit it in place when a rule changes, and leave the history to git.
+- In the handoff, state what changed, what was checked and what did not run, material limitations, and what still awaits review or approval. Distinguish measured results from assumptions.
 
 ## Fork status
 
-Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream PRs, no rebasing onto upstream, no upstream-review constraints. It forked from upstream `200b1e33` ("Fix clippy issues. (#152)"). Upstream fixes can still be cherry-picked when they are worth having.
+Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream PRs, no rebasing onto upstream, no upstream-review constraints, and no splitting of commits so they can be upstreamed. It forked from upstream `200b1e33` ("Fix clippy issues. (#152)"). Upstream fixes can still be cherry-picked when they are worth having.
 
-**Trunk.** `main` is the only branch that is pushed. Commit to it locally and push directly: there is a single developer, so there are no pushed topic branches or GitHub PRs. Larger work may run on a short-lived **local** branch in its own worktree. That branch is never pushed and never rebased; after review, `main` is fast-forwarded to it. If you are working in such a worktree, commit on its branch, not on `main`. The push bypasses the `main` ruleset as admin. Put the gate evidence in the commit message, since there is no PR to carry it. Every commit is normal fork history; don't split commits so they can be upstreamed.
+**Trunk.** `main` is the trunk and the only branch that is pushed; there is a single developer, so there are no pushed topic branches or GitHub PRs. How a change gets there is *Delivery* above.
 
 **Consumer.** `xbrlstd-rs` depends on this fork by git SHA (`xee-xpath`, `xee-interpreter`, `xee-xpath-macros`, `xee-xpath-ast` in `../xbrlstd-rs/Cargo.toml`, all pinned to the same `rev`). To ship a change, push `main` and bump that `rev` in `xbrlstd-rs`. **Never rewrite pushed history.** A pinned SHA that becomes unreachable breaks `xbrlstd-rs` builds.
 
@@ -125,5 +180,5 @@ Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream
 - **Gate:** `.github/workflows/ci.yml` runs on pushes to `main`, on PRs, and by hand (`workflow_dispatch`): fmt, clippy `-D warnings`, build, test, and the XPath and XSLT conformance `check`s, both in debug mode. `./check` runs the same tests and both suites locally. `.githooks/pre-push` runs the same gate minus conformance; change the two together. Activate the hook per clone with `git config core.hooksPath .githooks`.
 - **Fuzzing:** `fuzz/` is its own cargo workspace (outside the gate, so stable never builds libfuzzer) with `xee-json` targets `robustness` and `differential` (against serde_json). Run from the root: `cargo +nightly fuzz run <target> fuzz/corpus/<target> vendor/xpath-tests/misc/JSONTestSuite/test_parsing -- -max_total_time=300 -max_len=4096` (the writable corpus first, so `vendor/` is never written). Its replay tests, fmt and clippy run on stable with `--manifest-path fuzz/Cargo.toml`.
 - **Advisories:** `.github/workflows/audit.yml` runs `cargo audit` daily and on lockfile changes. It sits beside the gate, not in it.
-- **Upgrades:** follow the rounds in `xbrlstd-rs` (the umbrella `upgrade-tooling` skill). A lockfile step here must also pass a conformance run on **both** suites whose per-test verdicts match those on `main`. Run `xee-testrunner -v all` before and after, and diff the per-test verdict lines. `check` only catches regressions in tests already known to pass; the diff also shows newly passing tests (then run `update`) and failures that changed mode. The same applies to any change touching casting, serialization or parsing.
+- **Upgrades:** follow the rounds in `xbrlstd-rs` (the umbrella `upgrade-tooling` skill). A lockfile step also needs the per-test verdict diff on both suites (*Verification*).
 - **Releases:** none. There is no crates.io publishing; the fork is consumed by git SHA.

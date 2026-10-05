@@ -1,8 +1,8 @@
 # Following a bunch of recommendations from
 # https://corrode.dev/blog/tips-for-faster-ci-builds/
 
-# .githooks/pre-push runs the same gate minus conformance; change them
-# together.
+# .githooks/pre-commit runs the same gate on every commit that changes code;
+# change them together.
 
 name: Cargo Build & Test
 

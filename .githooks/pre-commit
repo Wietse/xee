@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: the commit gate. It runs what CI runs
+# (.github/workflows/ci.yml): fmt, clippy -D warnings, cargo test, and the
+# XPath and XSLT conformance checks in debug mode, which catches the overflow
+# and bounds-check panics release mode optimizes away. Change the two
+# together. AGENTS.md (Verification) is the rule this enforces: every commit
+# that changes code is gate-green, so a reviewer always reviews a tree that
+# passed it.
+#
+# A commit whose staged paths are all Markdown changes no code, and the gate
+# is skipped for it. The steps run on the working tree, as CI runs on the
+# pushed tree; stage everything you mean to test.
+#
+# Runs the toolchain rust-toolchain.toml pins (rustup auto-selects it).
+# Activate per clone: `git config core.hooksPath .githooks`.
+
+set -uo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# Gate unless every staged change is to a Markdown file. git answers the
+# question itself: --quiet exits 0 when nothing outside `*.md` differs.
+# --no-renames reports a rename as a deletion and an addition, so code
+# renamed to `.md` still counts, and without --diff-filter a type change
+# counts too. (A pipe into `grep -q` would not do: under pipefail the
+# writer's SIGPIPE, once grep stops reading, reads as "only Markdown".)
+if git diff --cached --quiet --no-renames -- . ':(exclude)*.md'; then
+    if ! git diff --cached --quiet; then
+        printf 'pre-commit: only Markdown staged, gate skipped\n'
+    fi
+    exit 0
+fi
+
+run_step() {
+    local label=$1
+    shift
+    printf '\n=== pre-commit: %s ===\n' "$label"
+    if ! "$@"; then
+        printf '\npre-commit: %s FAILED -- commit aborted.\n' "$label" >&2
+        exit 1
+    fi
+}
+
+run_step "cargo fmt --check --all"  cargo fmt --check --all
+run_step "cargo clippy -D warnings" cargo clippy --all-targets --all-features -- -D warnings
+run_step "cargo test --workspace"   cargo test --workspace
+run_step "XPath conformance check"  cargo run --bin xee-testrunner -- check vendor/xpath-tests/
+run_step "XSLT conformance check"   cargo run --bin xee-testrunner -- check vendor/xslt-tests/
+
+printf '\npre-commit: all checks passed\n'

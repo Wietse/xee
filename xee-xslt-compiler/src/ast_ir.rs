@@ -380,18 +380,20 @@ impl<'a> IrConverter<'a> {
         left: &ast::SequenceConstructorItem,
         items: impl Iterator<Item = &'b ast::SequenceConstructorItem>,
     ) -> error::SpannedResult<Bindings> {
-        let left_bindings = Ok(self.sequence_constructor_item(left)?);
-        items.fold(left_bindings, |left, right| {
-            let mut left_bindings = left?;
-            let mut right_bindings = self.sequence_constructor_item(right)?;
-            let expr = ir::Expr::Binary(ir::Binary {
-                left: left_bindings.atom(),
-                op: ir::BinaryOperator::Comma,
-                right: right_bindings.atom(),
-            });
-            let binding = self.variables.new_binding_no_span(expr);
-            Ok(left_bindings.concat(right_bindings).bind(binding))
-        })
+        let bindings = self.sequence_constructor_item(left)?;
+        let mut items = items.peekable();
+        if items.peek().is_none() {
+            return Ok(bindings);
+        }
+        // Each item is lowered to an expression of its own, and one sequence
+        // is built from all of them (see `ir::Sequence`).
+        let mut exprs = vec![bindings.expr()];
+        for item in items {
+            exprs.push(self.sequence_constructor_item(item)?.expr());
+        }
+        let expr = ir::Expr::Sequence(ir::Sequence { items: exprs });
+        let binding = self.variables.new_binding_no_span(expr);
+        Ok(Bindings::new(binding))
     }
 
     fn sequence_constructor_item(

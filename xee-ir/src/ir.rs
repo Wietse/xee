@@ -46,6 +46,7 @@ pub enum Expr {
     Treat(Treat),
     MapConstructor(MapConstructor),
     ArrayConstructor(ArrayConstructor),
+    Sequence(Sequence),
     XmlName(XmlName),
     XmlDocument(XmlRoot),
     XmlElement(XmlElement),
@@ -278,6 +279,14 @@ pub struct MapConstructor {
 pub enum ArrayConstructor {
     Square(Vec<AtomS>),
     Curly(AtomS),
+}
+
+/// A sequence expression, `(a, b, c)`, or an XSLT sequence constructor of
+/// several items: the items' values concatenated in order. Each item is an
+/// expression of its own, so its bindings end with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Sequence {
+    pub items: Vec<ExprS>,
 }
 
 // These are extensions to the IR that are only used by XSLT

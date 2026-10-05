@@ -27,6 +27,16 @@ impl Range {
         })
     }
 
+    /// The one range that `self` then `other` make, when `other` continues
+    /// `self` and the two fit in one range; `None` otherwise, when the
+    /// items have to be concatenated one by one.
+    pub(crate) fn merged(&self, other: &Range) -> Option<Range> {
+        if self.end() != other.start() {
+            return None;
+        }
+        Range::new(self.start().clone(), other.end().clone()).ok()
+    }
+
     pub(crate) fn start(&self) -> &IBig {
         &self.start
     }
@@ -203,5 +213,29 @@ where
     fn one_node(&self) -> error::Result<xot::Node> {
         // a range never contains nodes
         Err(error::Error::XPTY0004)
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    fn range(start: i64, end: i64) -> Range {
+        Range::new(start.into(), end.into()).unwrap()
+    }
+
+    #[test]
+    fn a_range_continuing_another_merges_up_to_the_maximum_size() {
+        let half = MAXIMUM_RANGE_SIZE / 2;
+        let merged = range(0, half).merged(&range(half, MAXIMUM_RANGE_SIZE));
+        assert_eq!(merged, Some(range(0, MAXIMUM_RANGE_SIZE)));
+        let too_long = range(0, half).merged(&range(half, MAXIMUM_RANGE_SIZE + 1));
+        assert_eq!(too_long, None);
+    }
+
+    #[test]
+    fn ranges_that_do_not_continue_each_other_do_not_merge() {
+        assert_eq!(range(3, 6).merged(&range(0, 3)), None);
+        assert_eq!(range(0, 3).merged(&range(4, 6)), None);
     }
 }

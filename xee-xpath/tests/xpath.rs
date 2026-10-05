@@ -221,6 +221,32 @@ fn test_range_combine_non_consecutive() {
     assert_debug_snapshot!(run("(1 to 5, 7 to 10)"));
 }
 
+// Two ranges are merged into one only where the second continues the
+// first. A comma keeps its operands in order (XPath 3.1 3.4.1), so
+// `(4 to 6, 1 to 3)` is 4, 5, 6, 1, 2, 3, not the range 1 to 6.
+#[test]
+fn test_range_concat_keeps_order() {
+    fn first_string(src: &str) -> String {
+        let sequence = run(src).unwrap();
+        let item = sequence.iter().next().unwrap();
+        item.to_atomic().unwrap().to_string().unwrap()
+    }
+    assert_eq!(
+        first_string("string-join((4 to 6, 1 to 3) ! string(), ' ')"),
+        "4 5 6 1 2 3"
+    );
+    assert_eq!(first_string("string((6 to 10, 1 to 5)[1])"), "6");
+    // overlapping and contained ranges keep every item too
+    assert_eq!(
+        first_string("string-join((1 to 5, 3 to 7) ! string(), ' ')"),
+        "1 2 3 4 5 3 4 5 6 7"
+    );
+    assert_eq!(
+        first_string("string-join((1 to 5, 2 to 3) ! string(), ' ')"),
+        "1 2 3 4 5 2 3"
+    );
+}
+
 #[test]
 fn test_for_loop() {
     assert_debug_snapshot!(run("for $x in 1 to 5 return $x + 2"));

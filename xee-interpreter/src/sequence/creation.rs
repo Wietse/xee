@@ -10,7 +10,7 @@ use super::{
     normalization::normalize,
     serialization::{serialize_sequence, SerializationParameters},
     traits::SequenceCore,
-    variant::{Empty, Range, RangeIterator},
+    variant::{Empty, RangeIterator},
 };
 
 impl Sequence {
@@ -60,11 +60,15 @@ impl Sequence {
                 Self::Many(many.into())
             }
             (Self::Range(a), Self::Range(b)) => {
-                // if the ranges are consecutive we can merge them
-                if a.end() == b.start() {
-                    Self::Range(Range::new(a.start().clone(), b.end().clone())?)
-                } else if b.end() == a.start() {
-                    Self::Range(Range::new(b.start().clone(), a.end().clone())?)
+                // Merged only when the second range continues the first (the
+                // other way round would reorder the items) and the two fit in
+                // one range. A merge too long for one range is concatenated
+                // item by item, as ranges that do not continue each other
+                // are, so concatenating ranges never fails, and how a longer
+                // concatenation is grouped never decides between a value and
+                // an error.
+                if let Some(range) = a.merged(&b) {
+                    Self::Range(range)
                 } else {
                     // otherwise unfortunately we have to construct the sequence
                     let mut v = Vec::with_capacity(a.len() + b.len());

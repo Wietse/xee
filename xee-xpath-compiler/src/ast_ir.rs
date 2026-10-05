@@ -310,27 +310,24 @@ impl<'a> IrConverter<'a> {
     }
 
     fn expr_with_span(&mut self, expr: &ast::Expr, span: Span) -> error::SpannedResult<Bindings> {
-        let expr = &expr.0;
-
-        // XXX could this be reduce?
-        let first_expr = &expr[0];
-        let span_start = span.start;
-        let rest_exprs = &expr[1..];
-        rest_exprs
+        let exprs = &expr.0;
+        if let [expr_single] = exprs.as_slice() {
+            return self.expr_single(expr_single);
+        }
+        // Each item is lowered to an expression of its own, and one sequence
+        // is built from all of them (see `ir::Sequence`).
+        let items = exprs
             .iter()
-            .fold(self.expr_single(first_expr), |acc, expr_single| {
-                let mut left_bindings = acc?;
-                let mut right_bindings = self.expr_single(expr_single)?;
-                let expr = ir::Expr::Binary(ir::Binary {
-                    left: left_bindings.atom(),
-                    op: ir::BinaryOperator::Comma,
-                    right: right_bindings.atom(),
-                });
-                let span_end = expr_single.span.end;
-                let span = (span_start..span_end).into();
-                let binding = self.variables.new_binding(expr, span);
-                Ok(left_bindings.concat(right_bindings).bind(binding))
-            })
+            .map(|expr_single| Ok(self.expr_single(expr_single)?.expr()))
+            .collect::<error::SpannedResult<Vec<_>>>()?;
+        let span_end = exprs
+            .last()
+            .map_or(span.end, |expr_single| expr_single.span.end);
+        let expr = ir::Expr::Sequence(ir::Sequence { items });
+        let binding = self
+            .variables
+            .new_binding(expr, (span.start..span_end).into());
+        Ok(Bindings::new(binding))
     }
 
     fn expr_or_empty(&mut self, expr: &ast::ExprOrEmptyS) -> error::SpannedResult<Bindings> {

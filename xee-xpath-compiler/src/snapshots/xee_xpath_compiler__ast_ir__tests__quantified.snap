@@ -10,25 +10,36 @@ Ok(
                     "v3",
                 ),
                 var_expr: Spanned {
-                    value: Binary(
-                        Binary {
-                            left: Spanned {
-                                value: Const(
-                                    Integer(
-                                        1,
+                    value: Sequence(
+                        Sequence {
+                            items: [
+                                Spanned {
+                                    value: Atom(
+                                        Spanned {
+                                            value: Const(
+                                                Integer(
+                                                    1,
+                                                ),
+                                            ),
+                                            span: 12..13,
+                                        },
                                     ),
-                                ),
-                                span: 12..13,
-                            },
-                            op: Comma,
-                            right: Spanned {
-                                value: Const(
-                                    Integer(
-                                        2,
+                                    span: 12..13,
+                                },
+                                Spanned {
+                                    value: Atom(
+                                        Spanned {
+                                            value: Const(
+                                                Integer(
+                                                    2,
+                                                ),
+                                            ),
+                                            span: 15..16,
+                                        },
                                     ),
-                                ),
-                                span: 15..16,
-                            },
+                                    span: 15..16,
+                                },
+                            ],
                         },
                     ),
                     span: 11..16,

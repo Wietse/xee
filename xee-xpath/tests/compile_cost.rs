@@ -119,26 +119,6 @@ fn a_dynamic_call_of_more_than_255_arguments_is_an_implementation_limit() {
     });
 }
 
-// Each item of a sequence is held in a local variable, and a local's slot is
-// a `u16`: a sequence of 65,535 items compiles, one of 65,536 is refused.
-#[test]
-fn a_sequence_of_65536_items_is_an_implementation_limit() {
-    fn sequence(n: usize) -> String {
-        let items = (0..n).map(|i| i.to_string()).collect::<Vec<_>>();
-        format!("({})", items.join(", "))
-    }
-    // Not a test of time: the deadline only keeps a regression to
-    // super-linear lowering from hanging the suite (3 s in debug).
-    within(600, || {
-        let queries = Queries::default();
-        assert!(queries.sequence(&sequence(65_535)).is_ok());
-        let error = queries
-            .sequence(&sequence(65_536))
-            .expect_err("65,536 locals do not fit a u16 slot");
-        assert_eq!(error.error, xee_xpath::error::ErrorValue::XPDY0130);
-    });
-}
-
 // `fn:apply` calls a function with an array's members as its arguments, and
 // the arity it passes on is a `u8` too: 256 members failed with XPTY0004,
 // where the call is an implementation limit, as a dynamic call of 256
@@ -168,4 +148,30 @@ fn applying_a_function_to_more_than_255_arguments_is_an_implementation_limit() {
             assert_eq!(error.error, xee_xpath::error::ErrorValue::XPDY0130);
         }
     });
+}
+
+// A sequence's items are evaluated one by one while the runs of items
+// before them wait on the stack, where locals live too. Every item here has
+// locals of its own, and with 17 items one waits behind each number of runs
+// from none to four; each must still read its own values.
+#[test]
+fn sequence_items_with_their_own_locals() {
+    let items = (0..17)
+        .map(|i| format!("let $x{i} := {i} return ($x{i}, $a)"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let src = format!("let $a := 'a' return string-join(({items}), ' ')");
+    let expected = (0..17)
+        .map(|i| format!("{i} a"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let queries = Queries::default();
+    let query = queries.one(&src, |_, item| Ok(item.clone())).unwrap();
+    let mut documents = Documents::new();
+    let builder = query.dynamic_context_builder(&documents);
+    let context = builder.build();
+    let item = query
+        .execute_with_context(&mut documents, &context)
+        .unwrap();
+    assert_eq!(item.to_atomic().unwrap().to_string().unwrap(), expected);
 }

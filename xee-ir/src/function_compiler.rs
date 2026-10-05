@@ -76,6 +76,7 @@ impl<'a> FunctionCompiler<'a> {
             ir::Expr::ArrayConstructor(array_constructor) => {
                 self.compile_array_constructor(array_constructor, span)
             }
+            ir::Expr::Sequence(sequence) => self.compile_sequence(sequence, span),
             ir::Expr::XmlName(xml_name) => self.compile_xml_name(xml_name, span),
             ir::Expr::XmlDocument(root) => self.compile_xml_document(root, span),
             ir::Expr::XmlElement(element) => self.compile_xml_element(element, span),
@@ -539,6 +540,58 @@ impl<'a> FunctionCompiler<'a> {
         let len: sequence::Sequence = len.into();
         self.builder.emit_constant(len, span)?;
         self.builder.emit(Instruction::CurlyMap, span);
+        Ok(())
+    }
+
+    // Each item is evaluated in order, its bindings ending with it, and the
+    // values are concatenated on the stack as a binary counter does: after
+    // the i-th item, one `Comma` for each trailing zero bit of i joins two
+    // runs of equal length, and the runs left at the end are joined last.
+    // The stack holds about log2(n) runs, and each item is copied about
+    // log2(n) times. Lowering the items to a chain of two-item
+    // concatenations, each bound to a local, held every intermediate
+    // sequence until the end of the expression (memory quadratic in the
+    // number of items), and copied what came before at each step (time
+    // quadratic). `Comma` keeps `Sequence::concat`'s semantics, which merge
+    // consecutive ranges; concatenation is associative, so the grouping
+    // does not change the result.
+    fn compile_sequence(
+        &mut self,
+        sequence: &ir::Sequence,
+        span: SourceSpan,
+    ) -> error::SpannedResult<()> {
+        if sequence.items.is_empty() {
+            return self.compile_atom(&xee_xpath_ast::span::Spanned::new(
+                ir::Atom::Const(ir::Const::EmptySequence),
+                (0..0).into(),
+            ));
+        }
+        // A local's slot is its place on the stack, so each run waiting there
+        // holds a slot of its own, under a name nothing looks up: an item's
+        // own locals then sit where their names say.
+        let waiting = ir::Name::new(String::new());
+        let mut named = 0;
+        for (i, item) in sequence.items.iter().enumerate() {
+            self.compile_expr(item)?;
+            for _ in 0..(i + 1).trailing_zeros() {
+                self.builder.emit(Instruction::Comma, span);
+            }
+            let runs = (i + 1).count_ones();
+            while named < runs {
+                self.scopes.push_name(&waiting);
+                named += 1;
+            }
+            while named > runs {
+                self.scopes.pop_name();
+                named -= 1;
+            }
+        }
+        for _ in 1..sequence.items.len().count_ones() {
+            self.builder.emit(Instruction::Comma, span);
+        }
+        for _ in 0..named {
+            self.scopes.pop_name();
+        }
         Ok(())
     }
 
@@ -1068,5 +1121,38 @@ impl<'a> FunctionCompiler<'a> {
         self.builder.emit(Instruction::Eq, span);
         self.builder.patch_jump(is_not_numeric, span)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use xee_interpreter::context::StaticContext;
+    use xee_interpreter::interpreter::Program;
+
+    use super::*;
+
+    // A local's slot is a `u16` in `Var` and `Set`: with 65,537 locals in
+    // scope, the one in slot 65,535 is read and written, the one in slot
+    // 65,536 is refused.
+    #[test]
+    fn local_65536_fits_and_one_more_does_not() {
+        let mut program = Program::new(StaticContext::default(), (0..0).into());
+        let mut scopes = Scopes::new();
+        let mode_ids = ModeIds::default();
+        let name = |i: usize| ir::Name::new(format!("v{i}"));
+        for i in 0..=usize::from(u16::MAX) + 1 {
+            scopes.push_name(&name(i));
+        }
+        let mut compiler =
+            FunctionCompiler::new(FunctionBuilder::new(&mut program), &mut scopes, &mode_ids);
+        let span: SourceSpan = (0..0).into();
+        assert!(compiler.compile_variable(&name(65_535), span).is_ok());
+        assert!(compiler.compile_variable_set(&name(65_535), span).is_ok());
+        let error = compiler.compile_variable(&name(65_536), span).unwrap_err();
+        assert_eq!(error.error, Error::XPDY0130);
+        let error = compiler
+            .compile_variable_set(&name(65_536), span)
+            .unwrap_err();
+        assert_eq!(error.error, Error::XPDY0130);
     }
 }

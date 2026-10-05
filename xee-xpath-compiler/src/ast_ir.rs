@@ -175,9 +175,7 @@ impl<'a> IrConverter<'a> {
                     let binding = self.variables.new_binding(expr, empty_span);
                     Ok(bindings.concat(arg_bindings).bind(binding))
                 }
-                ast::Postfix::Lookup(key_specifier) => {
-                    self.postfix_lookup(key_specifier, &mut bindings)
-                }
+                ast::Postfix::Lookup(key_specifier) => self.postfix_lookup(key_specifier, bindings),
             }
         })
     }
@@ -185,17 +183,22 @@ impl<'a> IrConverter<'a> {
     fn postfix_lookup(
         &mut self,
         key_specifier: &ast::KeySpecifier,
-        bindings: &mut Bindings,
+        mut outer_bindings: Bindings,
     ) -> error::SpannedResult<Bindings> {
         let span = (0..0).into();
 
         // the thing we loop over is bound
-        let var_atom = bindings.atom();
+        let var_atom = outer_bindings.atom();
 
         // make up an internal name for the loop variable
         let name = self.variables.new_name();
         // access the loop variable
-        let mut bindings = bindings.bind(Binding::new(
+        //
+        // The map's return expression starts from the loop variable alone.
+        // It used to start from a copy of the outer bindings, which it never
+        // reads: every lookup in a chain then held all the lookups before it
+        // twice, inside its map and outside, and the IR doubled per lookup.
+        let mut bindings = Bindings::new(Binding::new(
             name.clone(),
             ir::Expr::Atom(Spanned::new(ir::Atom::Variable(name.clone()), span)),
             span,
@@ -246,7 +249,7 @@ impl<'a> IrConverter<'a> {
             return_expr: Box::new(return_bindings.expr()),
         });
         let binding = self.variables.new_binding(expr, span);
-        Ok(bindings.bind(binding))
+        Ok(outer_bindings.bind(binding))
     }
 
     fn axis_step(&mut self, ast: &ast::AxisStep, span: Span) -> error::SpannedResult<Bindings> {
@@ -710,21 +713,21 @@ impl<'a> IrConverter<'a> {
         Bindings::new(binding)
     }
 
-    fn args(&mut self, args: &[ast::ExprSingleS]) -> error::SpannedResult<(Bindings, Vec<AtomS>)> {
-        if args.is_empty() {
+    fn args<'b>(
+        &mut self,
+        args: impl IntoIterator<Item = &'b ast::ExprSingleS>,
+    ) -> error::SpannedResult<(Bindings, Vec<AtomS>)> {
+        let mut args = args.into_iter();
+        let Some(first) = args.next() else {
             return Ok((Bindings::empty(), vec![]));
-        }
-        let first = &args[0];
-        let rest = &args[1..];
+        };
         let mut bindings = self.expr_single(first)?;
         let atoms = vec![bindings.atom()];
-        rest.iter()
-            .try_fold((bindings, atoms), |(bindings, atoms), arg| {
-                let mut arg_bindings = self.expr_single(arg)?;
-                let mut atoms = atoms.clone();
-                atoms.push(arg_bindings.atom());
-                Ok((bindings.concat(arg_bindings), atoms))
-            })
+        args.try_fold((bindings, atoms), |(bindings, mut atoms), arg| {
+            let mut arg_bindings = self.expr_single(arg)?;
+            atoms.push(arg_bindings.atom());
+            Ok((bindings.concat(arg_bindings), atoms))
+        })
     }
 
     fn unary_lookup(
@@ -793,18 +796,12 @@ impl<'a> IrConverter<'a> {
         ast: &ast::MapConstructor,
         span: Span,
     ) -> error::SpannedResult<Bindings> {
-        let keys = ast
-            .entries
-            .iter()
-            .map(|entry| entry.key.clone())
-            .collect::<Vec<_>>();
-        let values = ast
-            .entries
-            .iter()
-            .map(|entry| entry.value.clone())
-            .collect::<Vec<_>>();
-        let (key_bindings, key_atoms) = self.args(&keys)?;
-        let (value_bindings, value_atoms) = self.args(&values)?;
+        // The entries are lowered where they are. Copying every key and
+        // value first held a copy of each enclosing map's whole subtree
+        // while its entries were lowered: memory quadratic in the nesting.
+        let (key_bindings, key_atoms) = self.args(ast.entries.iter().map(|entry| &entry.key))?;
+        let (value_bindings, value_atoms) =
+            self.args(ast.entries.iter().map(|entry| &entry.value))?;
         let members = key_atoms.into_iter().zip(value_atoms).collect::<Vec<_>>();
         let expr = ir::Expr::MapConstructor(ir::MapConstructor { members });
         let expr_binding = self.variables.new_binding(expr, span);

@@ -57,19 +57,25 @@ impl Bindings {
 
     /// Given bindings, return a let expression.
     /// This takes all the bindings and wraps it in a let expression.
-    pub fn expr(&self) -> ir::ExprS {
-        let last_binding = self.bindings.last().unwrap();
-        let bindings = &self.bindings[..self.bindings.len() - 1];
-        let expr = last_binding.expr.clone();
+    ///
+    /// Consumes the bindings: their expressions move into the result.
+    /// Cloning them copied every binding's whole expression each time a
+    /// sub-expression was lowered, quadratic work in the expression's size.
+    pub fn expr(mut self) -> ir::ExprS {
+        let last_binding = self.bindings.pop().unwrap();
+        let span = last_binding.span;
         Spanned::new(
-            bindings.iter().rev().fold(expr, |expr, binding| {
-                ir::Expr::Let(ir::Let {
-                    name: binding.name.clone(),
-                    var_expr: Box::new(Spanned::new(binding.expr.clone(), binding.span)),
-                    return_expr: Box::new(Spanned::new(expr, last_binding.span)),
-                })
-            }),
-            last_binding.span,
+            self.bindings
+                .into_iter()
+                .rev()
+                .fold(last_binding.expr, |expr, binding| {
+                    ir::Expr::Let(ir::Let {
+                        name: binding.name,
+                        var_expr: Box::new(Spanned::new(binding.expr, binding.span)),
+                        return_expr: Box::new(Spanned::new(expr, span)),
+                    })
+                }),
+            span,
         )
     }
 
@@ -78,27 +84,27 @@ impl Bindings {
         (atom, self)
     }
 
-    pub fn bind_expr(&self, variables: &mut Variables, expr: ir::ExprS) -> Self {
+    pub fn bind_expr(self, variables: &mut Variables, expr: ir::ExprS) -> Self {
         let binding = variables.new_binding(expr.value, expr.span);
         self.bind(binding)
     }
 
-    pub fn bind_expr_no_span(&self, variables: &mut Variables, expr: ir::Expr) -> Self {
+    pub fn bind_expr_no_span(self, variables: &mut Variables, expr: ir::Expr) -> Self {
         let binding = variables.new_binding(expr, (0..0).into());
         self.bind(binding)
     }
 
-    /// Create a new Bindings by adding the existing binding to it
-    pub fn bind(&self, binding: Binding) -> Self {
-        let mut bindings = self.clone();
-        bindings.bindings.push(binding);
-        bindings
+    /// Add a binding. Consumes the bindings, like [`Self::concat`]:
+    /// copying the accumulated bindings on every addition made lowering a
+    /// sequence of n items quadratic.
+    pub fn bind(mut self, binding: Binding) -> Self {
+        self.bindings.push(binding);
+        self
     }
 
-    /// Concatenate one bindings object with another, creating a new one.
-    pub fn concat(&self, bindings: Bindings) -> Self {
-        let mut result = self.clone();
-        result.bindings.extend(bindings.bindings);
-        result
+    /// Concatenate one bindings object with another.
+    pub fn concat(mut self, bindings: Bindings) -> Self {
+        self.bindings.extend(bindings.bindings);
+        self
     }
 }

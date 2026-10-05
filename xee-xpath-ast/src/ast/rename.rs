@@ -1,4 +1,4 @@
-use ahash::{HashSet, HashSetExt};
+use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 
 use crate::Name;
 use crate::{ast, span::WithSpan, VariableNames};
@@ -7,22 +7,41 @@ use super::visitor::AstVisitor;
 
 struct UniqueNameGenerator {
     names: HashSet<Name>,
+    // For each base name, how many `*` suffixes the next candidate starts
+    // with.
+    suffixes: HashMap<Name, usize>,
 }
 
 impl UniqueNameGenerator {
     fn new() -> Self {
         UniqueNameGenerator {
             names: HashSet::new(),
+            suffixes: HashMap::new(),
         }
     }
 
     fn generate(&mut self, name: &Name) -> Name {
-        let mut name = name.clone();
-        while self.names.contains(&name) {
-            name = name.with_suffix();
+        // The names generated for a base are the base followed by `*` zero,
+        // one, two... times, taken in order, so all the shorter ones are
+        // already taken: start after them. Testing each in turn hashed
+        // names of growing length, cubic in the number of times one name is
+        // shadowed (8,192 nested `let $x` took 22 s in release). The loop
+        // still checks, so the name chosen is the same first free one as
+        // before. The k-th name is k characters longer than its base, and
+        // building and hashing it reads them all, so n shadowings still
+        // take time quadratic in n: the size of the names produced.
+        let mut suffixes = self.suffixes.get(name).copied().unwrap_or(0);
+        let mut candidate = name.clone();
+        for _ in 0..suffixes {
+            candidate = candidate.with_suffix();
         }
-        self.names.insert(name.clone());
-        name
+        while self.names.contains(&candidate) {
+            candidate = candidate.with_suffix();
+            suffixes += 1;
+        }
+        self.suffixes.insert(name.clone(), suffixes + 1);
+        self.names.insert(candidate.clone());
+        candidate
     }
 }
 

@@ -344,6 +344,63 @@ mod tests {
         }
     }
 
+    // The parser's map closures used to clone each parsed operand, argument
+    // or path into the node built over it, so every level copied the whole
+    // subtree below it: an arrow chain of 16,384 links took 173 s to parse in
+    // release (4,096: 4 s). With the operands moved it is linear. The stack is
+    // large so that debug-build frames cannot turn this into a stack test.
+    #[test]
+    fn test_long_arrow_chain_parses_in_linear_time() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(move || {
+                let src = format!("1{}", " => fn:abs()".repeat(16_000));
+                let parsed =
+                    ast::XPath::parse(&src, &Namespaces::default(), &VariableNames::default());
+                tx.send(parsed.is_ok()).unwrap();
+            })
+            .unwrap();
+        match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(ok) => assert!(ok, "an arrow chain of 16,000 links failed to parse"),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("an arrow chain of 16,000 links did not parse within 60 s")
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("the parse thread panicked")
+            }
+        }
+    }
+
+    // Renaming variables to unique names tested `x`, `x*`, `x**`... in turn
+    // for each new binding of `$x`, hashing names of growing length: cubic
+    // in the number of times one name is shadowed, 22 s in release for
+    // 8,192 nested `let $x`. Every parse runs the renaming. It is quadratic
+    // now, as the generated names themselves are: the k-th is k `*` long.
+    #[test]
+    fn test_shadowing_one_name_many_times_is_not_cubic() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(move || {
+                let src = format!("{}$x", "let $x := 1 return ".repeat(16_384));
+                // `XPath::parse` runs the renaming; the grammar alone does not
+                let parsed =
+                    ast::XPath::parse(&src, &Namespaces::default(), &VariableNames::default());
+                tx.send(parsed.is_ok()).unwrap();
+            })
+            .unwrap();
+        match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(ok) => assert!(ok, "16,384 nested `let $x` failed to parse"),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("16,384 nested `let $x` did not parse within 60 s")
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("the parse thread panicked")
+            }
+        }
+    }
+
     #[test]
     fn test_xpath_single_expr() {
         assert_ron_snapshot!(ast::ExprSingle::parse("1 + 2"));
@@ -805,6 +862,59 @@ mod tests {
     #[test]
     fn test_reserved_function_name_reference() {
         assert_ron_snapshot!(parse_xpath_simple("switch#2"));
+    }
+
+    // The bare keyword `if` is refused as a function name before its
+    // argument list is parsed, so the error is a syntax error, not
+    // `Reserved` (both are XPST0003): where the `if` expression went wrong,
+    // or at the `(` where no `if` expression is tried, as in a path step.
+    // An error inside the arguments is no longer reached: `if(?, foo:bar)`
+    // was an unknown prefix, XPST0081. A prefixed name is not the keyword
+    // and still parses as a call that `check_reserved` refuses.
+    #[test]
+    fn test_if_as_a_function_name() {
+        fn span(src: &str) -> Option<(usize, usize)> {
+            match parse_xpath_simple(src) {
+                Err(e @ ParserError::ExpectedFound { .. }) => Some((e.span().start, e.span().end)),
+                _ => None,
+            }
+        }
+        assert_eq!(span("if()"), Some((3, 4)));
+        assert_eq!(span("if(?, foo:bar)"), Some((4, 5)));
+        // In a path step no `if` expression is tried, and the lookahead's
+        // own error, at the `if` token, is still not the one reported (see
+        // `function_call` in `parser_core`).
+        assert_eq!(span("/if(1)"), Some((3, 4)));
+        assert_eq!(span("/if]"), Some((3, 4)));
+        assert!(matches!(
+            parse_xpath_simple("fn:if()"),
+            Err(ParserError::Reserved { .. })
+        ));
+    }
+
+    // An `if` whose condition fails to parse was tried again as a call to a
+    // function named `if`, which parsed the condition a second time: twice
+    // the work per nesting level, 8.9 s at depth 20 in release. The large
+    // stack keeps debug-build frames from turning this into a stack test.
+    #[test]
+    fn test_invalid_nested_if_fails_in_linear_time() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(move || {
+                let src = format!("{}1{}", "if (".repeat(1_000), ") then 1".repeat(1_000));
+                tx.send(parse_xpath_simple(&src).is_err()).unwrap();
+            })
+            .unwrap();
+        match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+            Ok(failed) => assert!(failed, "an `if` without `else` must not parse"),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                panic!("an invalid `if` chain 1,000 deep did not fail within 60 s")
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                panic!("the parse thread panicked")
+            }
+        }
     }
 
     #[test]

@@ -333,50 +333,31 @@ fn braced_uri_literal<'a>(lex: &mut Lexer<'a, Token<'a>>) -> &'a str {
 }
 
 fn parse_nested_comment<'a>(lexer: &mut Lexer<'a, Token<'a>>) -> Option<()> {
+    // One forward scan over the remainder: each `(:` opens a nested comment
+    // and each `:)` closes one, whichever comes first. (Searching the whole
+    // remainder for the next of each marker on every step made this quadratic
+    // in the comment's length.)
+    let bytes = lexer.remainder().as_bytes();
     let mut depth = 1;
-    while depth > 0 {
-        // we find the next start and next end
-        // TODO: this isn't as efficient as it could be
-        let next_start = lexer.remainder().find("(:");
-        let next_end = lexer.remainder().find(":)");
-
-        match (next_start, next_end) {
-            (Some(next_start), Some(next_end)) => {
-                if next_start < next_end {
-                    // we found a start token
-                    depth += 1;
-                    lexer.bump(next_start + 2);
-                } else {
-                    // we found an end token
-                    depth -= 1;
-                    lexer.bump(next_end + 2);
-                    // if this means we closed the last comment, we're done
-                    if depth == 0 {
-                        break;
-                    }
-                }
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        match (bytes[i], bytes[i + 1]) {
+            (b'(', b':') => {
+                depth += 1;
+                i += 2;
             }
-            (Some(_next_start), None) => {
-                // we found a start token, but no end token is
-                // ever coming, this is an error
-                lexer.bump(lexer.remainder().len());
-                return None;
-            }
-            (None, Some(next_end)) => {
-                // we found an end token
+            (b':', b')') => {
                 depth -= 1;
-                lexer.bump(next_end + 2);
-                // if this means we closed the last comment, we're done
+                i += 2;
                 if depth == 0 {
-                    break;
+                    lexer.bump(i);
+                    return Some(());
                 }
             }
-            (None, None) => {
-                // we found neither a start nor an end token
-                lexer.bump(lexer.remainder().len());
-                return None;
-            }
+            _ => i += 1,
         }
     }
-    Some(())
+    // the comment is never closed: an error
+    lexer.bump(bytes.len());
+    None
 }

@@ -128,7 +128,7 @@ where
         let argument_list_postfix = argument_list
             .clone()
             .map_with(|arguments, extra| {
-                let (arguments, params) = placeholder_arguments(&arguments);
+                let (arguments, params) = placeholder_arguments(arguments);
                 if params.is_empty() {
                     PostfixOrPlaceholderWrapper::Postfix(ast::Postfix::ArgumentList(arguments))
                 } else {
@@ -162,7 +162,7 @@ where
             span: Span,
         ) -> ast::PrimaryExprS {
             let name = name.map(|name| name.with_default_namespace(default_function_namespace));
-            let (arguments, params) = placeholder_arguments(&arguments);
+            let (arguments, params) = placeholder_arguments(arguments);
             if params.is_empty() {
                 ast::PrimaryExpr::FunctionCall(ast::FunctionCall { name, arguments })
                     .with_span(span)
@@ -175,8 +175,31 @@ where
             }
         }
 
-        let function_call = eqname
-            .clone()
+        // A call to a function named by the bare keyword `if` is never
+        // valid: an unprefixed function name must not be a reserved one
+        // (XPath 3.1 A.1.2, constraint reserved-function-names, and A.3).
+        // This alternative is tried when an `if` expression fails to parse,
+        // and trying it parsed the `if` condition a second time as an
+        // argument list, twice the work at every nesting level. The
+        // lookahead refuses the keyword before any argument is parsed.
+        //
+        // The error is then a syntax error where the `if` expression went
+        // wrong, or at the `(` where no `if` expression is tried, as for
+        // `/if(` as a path step. Where the call used to get further than the
+        // `if` expression, as with `?` arguments, an error inside the
+        // argument list, such as an unknown prefix (XPST0081), is no longer
+        // reached. Any one of several errors may be reported (2.3.1).
+        //
+        // The lookahead records an error of its own, with the `if` token's
+        // span. Where an `if` expression was tried, its error is the one
+        // reported. Where none was, the lookahead's is not reported either:
+        // `named_function_ref`, earlier in `primary_expr`, records one at
+        // the same position first, and the first span is kept. Other
+        // reserved names are still parsed as calls and refused by
+        // `check_reserved` below.
+        let function_call = just(Token::If)
+            .not()
+            .ignore_then(eqname.clone())
             .then(argument_list.clone())
             .try_map_with(move |(name, arguments), extra| {
                 let span = extra.span();
@@ -303,13 +326,12 @@ where
                             normal_postfixes.push(ast::Postfix::ArgumentList(arguments));
                             let step_expr = ast::StepExpr::PostfixExpr {
                                 primary,
-                                postfixes: normal_postfixes.clone(),
+                                // now collect more postfixes
+                                postfixes: std::mem::take(&mut normal_postfixes),
                             }
                             .with_empty_span();
                             // replace primary with a placeholder wrapper function
                             primary = placeholder_wrapper_function(step_expr, params, span);
-                            // now collect more postfixes
-                            normal_postfixes.clear();
                         }
                     }
                 }
@@ -429,12 +451,15 @@ where
             .at_least(1)
             .collect::<Vec<_>>()
             .map_with(|path_exprs, extra| {
-                if path_exprs.len() == 1 {
-                    ast::ExprSingle::Path(path_exprs[0].clone()).with_span(extra.span())
+                let mut path_exprs = path_exprs.into_iter();
+                let path_expr = path_exprs.next().expect("at_least(1)");
+                let rest = path_exprs.collect::<Vec<_>>();
+                if rest.is_empty() {
+                    ast::ExprSingle::Path(path_expr).with_span(extra.span())
                 } else {
                     ast::ExprSingle::Apply(ast::ApplyExpr {
-                        operator: ast::ApplyOperator::SimpleMap(path_exprs[1..].to_vec()),
-                        path_expr: path_exprs[0].clone(),
+                        operator: ast::ApplyOperator::SimpleMap(rest),
+                        path_expr,
                     })
                     .with_span(extra.span())
                 }
@@ -479,7 +504,7 @@ where
             argument_list: Vec<ArgumentOrPlaceholder>,
             span: Span,
         ) -> ast::ExprSingleS {
-            let (arguments, params) = placeholder_arguments(&argument_list);
+            let (arguments, params) = placeholder_arguments(argument_list);
             let primary = if params.is_empty() {
                 primary
             } else {
@@ -511,15 +536,14 @@ where
                 }
                 arrow_function_specifiers.into_iter().fold(
                     unary_expr,
-                    |expr, (specifier, argument_list)| {
-                        let mut argument_list = argument_list.clone();
+                    |expr, (specifier, mut argument_list)| {
                         argument_list.insert(0, ArgumentOrPlaceholder::Argument(expr));
 
                         match specifier {
                             ArrowFunctionSpecifier::EQName(name) => {
                                 let span = extra.span();
                                 primary_expr_to_expr_single(static_function_call(
-                                    name.clone(),
+                                    name,
                                     argument_list,
                                     &extra.state().namespaces.default_function_namespace,
                                     span,
@@ -727,12 +751,12 @@ where
             .then(expr_single.clone())
             .map_with(|(bindings, return_expr), extra| {
                 bindings
-                    .iter()
+                    .into_iter()
                     .rev()
                     .fold(return_expr, |return_expr, (var_name, var_expr)| {
                         ast::ExprSingle::Let(ast::LetExpr {
-                            var_name: var_name.clone(),
-                            var_expr: Box::new(var_expr.clone()),
+                            var_name,
+                            var_expr: Box::new(var_expr),
                             return_expr: Box::new(return_expr),
                         })
                         .with_span(extra.span())
@@ -761,12 +785,12 @@ where
             .then(expr_single.clone())
             .map_with(|(bindings, return_expr), extra| {
                 bindings
-                    .iter()
+                    .into_iter()
                     .rev()
                     .fold(return_expr, |return_expr, (var_name, var_expr)| {
                         ast::ExprSingle::For(ast::ForExpr {
-                            var_name: var_name.clone(),
-                            var_expr: Box::new(var_expr.clone()),
+                            var_name,
+                            var_expr: Box::new(var_expr),
                             return_expr: Box::new(return_expr),
                         })
                         .with_span(extra.span())
@@ -801,18 +825,18 @@ where
         .then_ignore(just(Token::Satisfies))
         .then(expr_single)
         .map_with(|((quantifier, bindings), satisfies_expr), extra| {
-            bindings
-                .iter()
-                .rev()
-                .fold(satisfies_expr, |satisfies_expr, (var_name, var_expr)| {
+            bindings.into_iter().rev().fold(
+                satisfies_expr,
+                |satisfies_expr, (var_name, var_expr)| {
                     ast::ExprSingle::Quantified(ast::QuantifiedExpr {
                         quantifier: quantifier.clone(),
-                        var_name: var_name.clone(),
-                        var_expr: Box::new(var_expr.clone()),
+                        var_name,
+                        var_expr: Box::new(var_expr),
                         satisfies_expr: Box::new(satisfies_expr),
                     })
                     .with_span(extra.span())
-                })
+                },
+            )
         })
         .boxed();
 
@@ -957,16 +981,20 @@ enum ArgumentOrPlaceholder {
 // a list of real arguments and a list of parameters to construct for the new
 // function without the placeholders. If this list of parameters is empty, no
 // wrapping placeholder function is constructed.
+// Takes the arguments by value: they are moved into the call, never
+// cloned. A clone copied each argument's whole subtree at every nesting
+// level, quadratic work in the nesting depth, and its recursion ran
+// outside the parser's stack-growth checks.
 fn placeholder_arguments(
-    aps: &[ArgumentOrPlaceholder],
+    aps: Vec<ArgumentOrPlaceholder>,
 ) -> (Vec<ast::ExprSingleS>, Vec<ast::Param>) {
     let mut placeholder_index = 0;
     let mut arguments = Vec::new();
     let mut params = Vec::new();
-    for argument_or_placeholder in aps.iter() {
+    for argument_or_placeholder in aps {
         match argument_or_placeholder {
             ArgumentOrPlaceholder::Argument(expr) => {
-                arguments.push(expr.clone());
+                arguments.push(expr);
             }
             ArgumentOrPlaceholder::Placeholder => {
                 // XXX what if someone uses this as a parameter name?

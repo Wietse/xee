@@ -719,11 +719,12 @@ impl<'a> Interpreter<'a> {
         function: &function::Function,
         arguments: &[sequence::Sequence],
     ) -> error::Result<sequence::Sequence> {
+        // the arity is a `u8`, as in the `Call` instruction
+        let arity = u8::try_from(arguments.len()).map_err(|_| error::Error::XPDY0130)?;
         // put function onto the stack
         let item: sequence::Item = function.clone().into();
         self.state.push(item);
         // then arguments
-        let arity = arguments.len() as u8;
         for arg in arguments.iter() {
             self.state.push(arg.clone());
         }

@@ -84,8 +84,11 @@ impl<'a> IrConverter<'a> {
         self.static_function_atom("simple-content", FN_NAMESPACE, 2)
     }
 
-    fn concat_atom(&mut self, arity: u8) -> ir::Atom {
-        self.static_function_atom("concat", FN_NAMESPACE, arity)
+    // `fn:concat` is registered for a fixed range of arities only; `None`
+    // outside it.
+    fn concat_atom(&mut self, arity: usize) -> Option<ir::Atom> {
+        let arity = u8::try_from(arity).ok()?;
+        self.function_atom("concat", FN_NAMESPACE, arity)
     }
 
     // fn error_atom(&mut self) -> ir::Atom {
@@ -93,15 +96,17 @@ impl<'a> IrConverter<'a> {
     // }
 
     fn static_function_atom(&mut self, name: &str, namespace: &str, arity: u8) -> ir::Atom {
-        ir::Atom::Const(ir::Const::StaticFunctionReference(
-            self.static_context
-                .function_id_by_name(
-                    &Name::new(name.to_string(), namespace.to_string(), String::new()),
-                    arity,
-                )
-                .unwrap(),
-            None,
-        ))
+        self.function_atom(name, namespace, arity).unwrap()
+    }
+
+    fn function_atom(&mut self, name: &str, namespace: &str, arity: u8) -> Option<ir::Atom> {
+        let id = self.static_context.function_id_by_name(
+            &Name::new(name.to_string(), namespace.to_string(), String::new()),
+            arity,
+        )?;
+        Some(ir::Atom::Const(ir::Const::StaticFunctionReference(
+            id, None,
+        )))
     }
 
     fn simple_content_expr(
@@ -674,7 +679,11 @@ impl<'a> IrConverter<'a> {
             // concatenate all the pieces of content into a single string
             // TODO: this may create more than we have arities for, so we may want to use more
             // generic concat function that takes a sequence at some point
-            let concat_atom = self.concat_atom(atoms.len() as u8);
+            // more pieces than `fn:concat` takes is an implementation limit
+            let concat_atom = self.concat_atom(atoms.len()).ok_or(error::SpannedError {
+                error: error::Error::XPDY0130,
+                span: None,
+            })?;
             let expr = ir::Expr::FunctionCall(ir::FunctionCall {
                 atom: Spanned::new(concat_atom, (0..0).into()),
                 args: atoms,
@@ -826,9 +835,11 @@ impl<'a> IrConverter<'a> {
             })?;
 
         let bindings = self.select_or_sequence_constructor(break_)?;
+        // `expr()` consumes the bindings; the copy keeps them for the
+        // binding added below, as before.
         let expr = ir::Expr::IterateBreak(ir::IterateBreak {
             loop_name,
-            return_expr: Box::new(bindings.expr()),
+            return_expr: Box::new(bindings.clone().expr()),
         });
         Ok(bindings.bind_expr_no_span(&mut self.variables, expr))
     }
@@ -855,9 +866,11 @@ impl<'a> IrConverter<'a> {
             self.variables
                 .new_binding(empty_sequence.value, empty_sequence.span),
         );
+        // `expr()` consumes the bindings; the copy keeps them for the
+        // binding added below, as before.
         let let_next = ir::Expr::IterateLetNext(ir::IterateLetNext {
             params,
-            return_expr: Box::new(return_expr.expr()),
+            return_expr: Box::new(return_expr.clone().expr()),
         });
         let result = return_expr.bind_expr_no_span(&mut self.variables, let_next);
         Ok(result)
@@ -1101,7 +1114,9 @@ impl<'a> IrConverter<'a> {
         let filter = ir::Expr::PatternPredicate(ir::PatternPredicate {
             context_names: context_names.clone(),
             var_atom,
-            expr: Box::new(bindings.expr()),
+            // `expr()` consumes the bindings; the copy keeps them for the
+            // binding added below, as before.
+            expr: Box::new(bindings.clone().expr()),
         });
         let bindings = bindings.bind_expr(&mut self.variables, Spanned::new(filter, (0..0).into()));
 

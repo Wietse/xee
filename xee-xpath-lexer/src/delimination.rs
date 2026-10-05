@@ -32,7 +32,18 @@ impl<'a> Iterator for DeliminationIterator<'a> {
     type Item = (Token<'a>, Span);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (token, span) = self.base.next()?;
+        // Whitespace and comments are skipped by looping, not by calling
+        // `next` again: a recursive call per skipped token let a long run of
+        // comments overflow the stack.
+        let (token, span) = loop {
+            let (token, span) = self.base.next()?;
+            if !matches!(
+                token.symbol_type(),
+                SymbolType::Whitespace | SymbolType::CommentStart
+            ) {
+                break (token, span);
+            }
+        };
 
         // IntegerLiteral won't be found with a dot behind it, as it would
         // become a decimal literal
@@ -73,13 +84,8 @@ impl<'a> Iterator for DeliminationIterator<'a> {
                 }
             }
             SymbolType::Delimiting | SymbolType::Error => Some((token, span)),
-            SymbolType::Whitespace => {
-                // we suppress whitespace
-                self.next()
-            }
-            SymbolType::CommentStart => {
-                // we skip comments
-                self.next()
+            SymbolType::Whitespace | SymbolType::CommentStart => {
+                unreachable!("whitespace and comments are skipped above")
             }
         }
     }

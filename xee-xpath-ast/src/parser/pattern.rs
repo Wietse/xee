@@ -241,17 +241,26 @@ where
                 root: pattern::PathRoot::AbsoluteDoubleSlash,
                 steps,
             });
-        let relative_path = relative_path_expr.map(|steps| {
+        let relative_path = relative_path_expr.map(|mut steps| {
             // shortcut to create an absolute path if that's possible.
             // The use of parenthesized expr can otherwise turn stuff into
-            // a postfix expr even though it's actually a simple path expr
-            if steps.len() == 1 {
-                if let pattern::StepExpr::PostfixExpr(postfix_expr) = &steps[0] {
-                    if postfix_expr.predicates.is_empty() {
-                        if let pattern::ExprPattern::Path(path_expr) = &postfix_expr.expr {
-                            return path_expr.clone();
-                        }
-                    }
+            // a postfix expr even though it's actually a simple path expr.
+            // The path is moved out, not cloned: a clone copied the whole
+            // nested pattern at every level of parentheses.
+            if let [pattern::StepExpr::PostfixExpr(pattern::PostfixExpr {
+                expr: pattern::ExprPattern::Path(_),
+                predicates,
+            })] = steps.as_slice()
+            {
+                if predicates.is_empty() {
+                    let Some(pattern::StepExpr::PostfixExpr(pattern::PostfixExpr {
+                        expr: pattern::ExprPattern::Path(path_expr),
+                        ..
+                    })) = steps.pop()
+                    else {
+                        unreachable!("the slice pattern above matched this step");
+                    };
+                    return path_expr;
                 }
             }
             pattern::PathExpr {
@@ -493,5 +502,18 @@ mod tests {
             &namespaces,
             &variable_names
         ));
+    }
+
+    // A parenthesized path is unwrapped to the path inside, but only when
+    // no predicate follows it: `(foo)[bar]` keeps its predicate.
+    #[test]
+    fn test_parenthesized_path_keeps_its_predicate() {
+        let namespaces = Namespaces::default();
+        let variable_names = VariableNames::new();
+        let parse = |src| pattern::Pattern::<ast::ExprS>::parse(src, &namespaces, &variable_names);
+        // dropping the predicate would leave what the bare parentheses
+        // give, spans included
+        assert_ne!(parse("(foo)[bar]").unwrap(), parse("(foo)").unwrap());
+        assert_ne!(parse("(/)[doc]").unwrap(), parse("(/)").unwrap());
     }
 }

@@ -56,6 +56,70 @@ fn test_open_comment_by_itself() {
 }
 
 #[test]
+fn test_comment_nested_then_token() {
+    let mut lex = lexer("(: a (: b :) c :)x");
+    assert_eq!(lex.next(), Some((Token::NCName("x"), (17..18))));
+    assert_eq!(lex.next(), None);
+}
+
+#[test]
+fn test_comment_overlapping_markers() {
+    // in `(:):)` the `:` after the opener starts the closer; in
+    // `(:(:):):)` the inner `(:)` opens a comment before it closes one
+    let mut lex = lexer("(:):)1");
+    assert_eq!(lex.next(), Some((Token::IntegerLiteral(ibig!(1)), (5..6))));
+    let mut lex = lexer("(:(:):):)1");
+    assert_eq!(lex.next(), Some((Token::IntegerLiteral(ibig!(1)), (9..10))));
+}
+
+// Runs `f` on its own thread and fails if it has not finished within 60 s,
+// so a regression to quadratic time fails instead of hanging the suite.
+fn within_a_minute(f: impl FnOnce() + Send + 'static) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        f();
+        tx.send(()).unwrap();
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(60)) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => panic!("did not finish within 60 s"),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            panic!("the lexing thread panicked")
+        }
+    }
+}
+
+#[test]
+fn test_many_comments_in_a_row() {
+    // Skipping each comment used to be a recursive call, so a long run of
+    // comments overflowed the stack. This runs on the test thread's own
+    // stack on purpose.
+    let src = format!("{}1", "(::)".repeat(200_000));
+    let mut lex = lexer(&src);
+    assert_eq!(
+        lex.next(),
+        Some((Token::IntegerLiteral(ibig!(1)), (800_000..800_001)))
+    );
+    assert_eq!(lex.next(), None);
+}
+
+#[test]
+fn test_deeply_nested_comment() {
+    // Each nesting marker used to search the whole rest of the input for
+    // the next one of each kind, quadratic in the comment's length.
+    within_a_minute(|| {
+        let k = 500_000;
+        let src = format!("{}{}1", "(:".repeat(k), ":)".repeat(k));
+        let mut lex = lexer(&src);
+        assert_eq!(
+            lex.next(),
+            Some((Token::IntegerLiteral(ibig!(1)), (4 * k..4 * k + 1)))
+        );
+        assert_eq!(lex.next(), None);
+    });
+}
+
+#[test]
 fn test_integer_literal() {
     let mut lex = lexer("123");
     assert_eq!(

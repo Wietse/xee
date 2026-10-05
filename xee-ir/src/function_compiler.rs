@@ -101,23 +101,23 @@ impl<'a> FunctionCompiler<'a> {
             ir::Atom::Const(c) => {
                 match c {
                     ir::Const::Boolean(b) => {
-                        self.builder.emit_constant((*b).into(), span);
+                        self.builder.emit_constant((*b).into(), span)?;
                     }
                     ir::Const::Integer(i) => {
-                        self.builder.emit_constant((i.clone()).into(), span);
+                        self.builder.emit_constant((i.clone()).into(), span)?;
                     }
                     ir::Const::String(s) => {
-                        self.builder.emit_constant((s).into(), span);
+                        self.builder.emit_constant((s).into(), span)?;
                     }
                     ir::Const::Double(d) => {
-                        self.builder.emit_constant((*d).into(), span);
+                        self.builder.emit_constant((*d).into(), span)?;
                     }
                     ir::Const::Decimal(d) => {
-                        self.builder.emit_constant((*d).into(), span);
+                        self.builder.emit_constant((*d).into(), span)?;
                     }
                     ir::Const::EmptySequence => self
                         .builder
-                        .emit_constant(sequence::Sequence::default(), span),
+                        .emit_constant(sequence::Sequence::default(), span)?,
                     ir::Const::StaticFunctionReference(static_function_id, context_names) => {
                         self.compile_static_function_reference(
                             *static_function_id,
@@ -134,20 +134,14 @@ impl<'a> FunctionCompiler<'a> {
 
     fn compile_variable(&mut self, name: &ir::Name, span: SourceSpan) -> error::SpannedResult<()> {
         if let Some(index) = self.scopes.get(name) {
-            if index > u16::MAX as usize {
-                return Err(Error::XPDY0130.with_span(span));
-            }
-            self.builder.emit(Instruction::Var(index as u16), span);
+            let index = u16::try_from(index).map_err(|_| Error::XPDY0130.with_span(span))?;
+            self.builder.emit(Instruction::Var(index), span);
             Ok(())
         } else {
             // if value is in any outer scopes
             if self.scopes.is_closed_over_name(name) {
-                let index = self.builder.add_closure_name(name);
-                if index > u16::MAX as usize {
-                    return Err(Error::XPDY0130.with_span(span));
-                }
-                self.builder
-                    .emit(Instruction::ClosureVar(index as u16), span);
+                let index = self.builder.add_closure_name(name, span)?;
+                self.builder.emit(Instruction::ClosureVar(index), span);
                 Ok(())
             } else {
                 // TODO: this should be unreachable but
@@ -166,10 +160,8 @@ impl<'a> FunctionCompiler<'a> {
         span: SourceSpan,
     ) -> error::SpannedResult<()> {
         if let Some(index) = self.scopes.get(name) {
-            if index > u16::MAX as usize {
-                return Err(Error::XPDY0130.with_span(span));
-            }
-            self.builder.emit(Instruction::Set(index as u16), span);
+            let index = u16::try_from(index).map_err(|_| Error::XPDY0130.with_span(span))?;
+            self.builder.emit(Instruction::Set(index), span);
         } else {
             panic!("can only set locals: {:?}", name);
         }
@@ -190,9 +182,9 @@ impl<'a> FunctionCompiler<'a> {
         let jump_else = self.builder.emit_jump_forward(JumpCondition::False, span);
         self.compile_expr(&if_.then)?;
         let jump_end = self.builder.emit_jump_forward(JumpCondition::Always, span);
-        self.builder.patch_jump(jump_else);
+        self.builder.patch_jump(jump_else, span)?;
         self.compile_expr(&if_.else_)?;
-        self.builder.patch_jump(jump_end);
+        self.builder.patch_jump(jump_end, span)?;
         Ok(())
     }
 
@@ -285,31 +277,31 @@ impl<'a> FunctionCompiler<'a> {
                 let first_false = self.builder.emit_jump_forward(JumpCondition::False, span);
                 let second_false = self.builder.emit_jump_forward(JumpCondition::False, span);
                 // both are true, so put true on stack and jump to end
-                self.builder.emit_constant(true.into(), span);
+                self.builder.emit_constant(true.into(), span)?;
                 let end = self.builder.emit_jump_forward(JumpCondition::Always, span);
-                self.builder.patch_jump(first_false);
+                self.builder.patch_jump(first_false, span)?;
                 // pop the second item on the stack
                 self.builder.emit(Instruction::Pop, span);
-                self.builder.patch_jump(second_false);
+                self.builder.patch_jump(second_false, span)?;
                 // now put false on the stack
-                self.builder.emit_constant(false.into(), span);
-                self.builder.patch_jump(end);
+                self.builder.emit_constant(false.into(), span)?;
+                self.builder.patch_jump(end, span)?;
             }
             ir::BinaryOperator::Or => {
                 // No short-circuiting here either; see the `And` arm above.
                 let first_true = self.builder.emit_jump_forward(JumpCondition::True, span);
                 let second_true = self.builder.emit_jump_forward(JumpCondition::True, span);
                 // both are false, so put false on stack and jump to end
-                self.builder.emit_constant(false.into(), span);
+                self.builder.emit_constant(false.into(), span)?;
                 let end = self.builder.emit_jump_forward(JumpCondition::Always, span);
                 // if first is true, pop second
-                self.builder.patch_jump(first_true);
+                self.builder.patch_jump(first_true, span)?;
                 // pop the second item on the stack
                 self.builder.emit(Instruction::Pop, span);
-                self.builder.patch_jump(second_true);
+                self.builder.patch_jump(second_true, span)?;
                 // now put true on the stack
-                self.builder.emit_constant(true.into(), span);
-                self.builder.patch_jump(end);
+                self.builder.emit_constant(true.into(), span)?;
+                self.builder.patch_jump(end, span)?;
             }
             ir::BinaryOperator::Is => {
                 self.builder.emit(Instruction::Is, span);
@@ -363,14 +355,14 @@ impl<'a> FunctionCompiler<'a> {
 
         let function = compiler
             .builder
-            .finish("inline".to_string(), function_definition, span);
+            .finish("inline".to_string(), function_definition, span)?;
         // now place all captured names on stack, to ensure we have the
         // closure
         // in reverse order so we can pop them off in the right order
         for name in function.closure_names.iter().rev() {
             self.compile_variable(name, span)?;
         }
-        Ok(self.builder.add_function(function))
+        self.builder.add_function(function, span)
     }
 
     pub(crate) fn compile_function_definition(
@@ -408,7 +400,7 @@ impl<'a> FunctionCompiler<'a> {
                     self.compile_variable(&context_names.item, span)?;
                 } else {
                     self.builder
-                        .emit_constant(sequence::Sequence::default(), span);
+                        .emit_constant(sequence::Sequence::default(), span)?;
                 }
             }
             Some(FunctionRule::PositionFirst) => self.compile_variable(
@@ -440,8 +432,11 @@ impl<'a> FunctionCompiler<'a> {
         for arg in &function_call.args {
             self.compile_atom(arg)?;
         }
-        self.builder
-            .emit(Instruction::Call(function_call.args.len() as u8), span);
+        // the arity is a `u8` in the `Call` instruction; a static call is
+        // refused earlier, a dynamic one only here
+        let arity =
+            u8::try_from(function_call.args.len()).map_err(|_| Error::XPDY0130.with_span(span))?;
+        self.builder.emit(Instruction::Call(arity), span);
         Ok(())
     }
 
@@ -468,8 +463,8 @@ impl<'a> FunctionCompiler<'a> {
 
     fn compile_step(&mut self, step: &ir::Step, span: SourceSpan) -> error::SpannedResult<()> {
         self.compile_atom(&step.context)?;
-        let step_id = self.builder.add_step(step.step.clone());
-        self.builder.emit(Instruction::Step(step_id as u16), span);
+        let step_id = self.builder.add_step(step.step.clone(), span)?;
+        self.builder.emit(Instruction::Step(step_id), span);
         Ok(())
     }
 
@@ -486,9 +481,8 @@ impl<'a> FunctionCompiler<'a> {
     fn compile_cast(&mut self, cast: &ir::Cast, span: SourceSpan) -> error::SpannedResult<()> {
         self.compile_atom(&cast.atom)?;
         let cast_type = cast.cast_type();
-        let cast_type_id = self.builder.add_cast_type(cast_type);
-        self.builder
-            .emit(Instruction::Cast(cast_type_id as u16), span);
+        let cast_type_id = self.builder.add_cast_type(cast_type, span)?;
+        self.builder.emit(Instruction::Cast(cast_type_id), span);
         Ok(())
     }
 
@@ -499,9 +493,8 @@ impl<'a> FunctionCompiler<'a> {
     ) -> error::SpannedResult<()> {
         self.compile_atom(&castable.atom)?;
         let cast_type = castable.cast_type();
-        let cast_type_id = self.builder.add_cast_type(cast_type);
-        self.builder
-            .emit(Instruction::Castable(cast_type_id as u16), span);
+        let cast_type_id = self.builder.add_cast_type(cast_type, span)?;
+        self.builder.emit(Instruction::Castable(cast_type_id), span);
         Ok(())
     }
 
@@ -513,17 +506,19 @@ impl<'a> FunctionCompiler<'a> {
         self.compile_atom(&instance_of.atom)?;
         let sequence_type_id = self
             .builder
-            .add_sequence_type(instance_of.sequence_type.clone());
+            .add_sequence_type(instance_of.sequence_type.clone(), span)?;
         self.builder
-            .emit(Instruction::InstanceOf(sequence_type_id as u16), span);
+            .emit(Instruction::InstanceOf(sequence_type_id), span);
         Ok(())
     }
 
     fn compile_treat(&mut self, treat: &ir::Treat, span: SourceSpan) -> error::SpannedResult<()> {
         self.compile_atom(&treat.atom)?;
-        let sequence_type_id = self.builder.add_sequence_type(treat.sequence_type.clone());
+        let sequence_type_id = self
+            .builder
+            .add_sequence_type(treat.sequence_type.clone(), span)?;
         self.builder
-            .emit(Instruction::Treat(sequence_type_id as u16), span);
+            .emit(Instruction::Treat(sequence_type_id), span);
         Ok(())
     }
 
@@ -542,7 +537,7 @@ impl<'a> FunctionCompiler<'a> {
         // emit constant with size of map
         let len: IBig = map_constructor.members.len().into();
         let len: sequence::Sequence = len.into();
-        self.builder.emit_constant(len, span);
+        self.builder.emit_constant(len, span)?;
         self.builder.emit(Instruction::CurlyMap, span);
         Ok(())
     }
@@ -586,7 +581,7 @@ impl<'a> FunctionCompiler<'a> {
         // emit constant with length of array
         let len: IBig = atoms.len().into();
         let len: sequence::Sequence = len.into();
-        self.builder.emit_constant(len, span);
+        self.builder.emit_constant(len, span)?;
         self.builder.emit(Instruction::SquareArray, span);
         Ok(())
     }
@@ -613,7 +608,7 @@ impl<'a> FunctionCompiler<'a> {
 
         self.compile_sequence_loop_iterate(loop_start, &map.context_names, span)?;
 
-        self.builder.patch_jump(loop_end);
+        self.builder.patch_jump(loop_end, span)?;
         self.compile_sequence_loop_end(span);
 
         self.builder.emit(Instruction::BuildComplete, span);
@@ -655,22 +650,22 @@ impl<'a> FunctionCompiler<'a> {
 
         // We take the effective boolean value of the result
         // if filter is false, we skip this item
-        self.builder.patch_jump(is_not_numeric);
+        self.builder.patch_jump(is_not_numeric, span)?;
         let is_included = self.builder.emit_jump_forward(JumpCondition::True, span);
         // we need to clean up the stack after this
         self.builder.emit(Instruction::Pop, span);
         // and iterate the loop
         let iterate = self.builder.emit_jump_forward(JumpCondition::Always, span);
 
-        self.builder.patch_jump(is_included);
+        self.builder.patch_jump(is_included, span)?;
         // push item to new build
         self.builder.emit(Instruction::BuildPush, span);
 
-        self.builder.patch_jump(iterate);
+        self.builder.patch_jump(iterate, span)?;
         // no need to clean up the stack, as filter get is pushed onto sequence
         self.compile_sequence_loop_iterate(loop_start, &filter.context_names, span)?;
 
-        self.builder.patch_jump(loop_end);
+        self.builder.patch_jump(loop_end, span)?;
         self.compile_sequence_loop_end(span);
 
         self.builder.emit(Instruction::BuildComplete, span);
@@ -692,15 +687,15 @@ impl<'a> FunctionCompiler<'a> {
         for param in iterate.params.iter() {
             self.compile_expr(&param.value)?;
             if let Some(type_) = &param.type_ {
-                let sequence_type_id = self.builder.add_sequence_type(type_.clone());
+                let sequence_type_id = self.builder.add_sequence_type(type_.clone(), span)?;
                 self.builder
-                    .emit(Instruction::Treat(sequence_type_id as u16), span);
+                    .emit(Instruction::Treat(sequence_type_id), span);
             }
             self.scopes.push_name(&param.name);
         }
 
         // Mark the loop as not yet broken
-        self.builder.emit_constant(false.into(), span);
+        self.builder.emit_constant(false.into(), span)?;
         self.scopes.push_name(&iterate.loop_name);
 
         let (loop_start, loop_end) =
@@ -725,7 +720,7 @@ impl<'a> FunctionCompiler<'a> {
 
         self.compile_sequence_loop_iterate(loop_start, &iterate.context_names, span)?;
 
-        self.builder.patch_jump(loop_end);
+        self.builder.patch_jump(loop_end, span)?;
 
         // add the on_complete result after the loop is finished
         if let Some(on_complete) = &iterate.on_complete {
@@ -733,7 +728,7 @@ impl<'a> FunctionCompiler<'a> {
             self.builder.emit(Instruction::BuildPush, span);
         }
 
-        self.builder.patch_jump(loop_break);
+        self.builder.patch_jump(loop_break, span)?;
 
         // process loop end after break completes
         self.compile_sequence_loop_end(span);
@@ -760,7 +755,7 @@ impl<'a> FunctionCompiler<'a> {
         span: SourceSpan,
     ) -> error::SpannedResult<()> {
         // Mark the loop as breaking
-        self.builder.emit_constant(true.into(), span);
+        self.builder.emit_constant(true.into(), span)?;
         self.compile_variable_set(&iterate_break.loop_name, span)?;
         // Return the contained expression
         self.compile_expr(&iterate_break.return_expr)?;
@@ -776,9 +771,9 @@ impl<'a> FunctionCompiler<'a> {
         for param in iterate_let_next.params.iter() {
             self.compile_expr(&param.value)?;
             if let Some(type_) = &param.type_ {
-                let sequence_type_id = self.builder.add_sequence_type(type_.clone());
+                let sequence_type_id = self.builder.add_sequence_type(type_.clone(), span)?;
                 self.builder
-                    .emit(Instruction::Treat(sequence_type_id as u16), span);
+                    .emit(Instruction::Treat(sequence_type_id), span);
             }
         }
         // Then, store them back into the variables (in reverse, so they match up)
@@ -786,7 +781,7 @@ impl<'a> FunctionCompiler<'a> {
             self.compile_variable_set(&param.name, span)?;
         }
         // Finally, emit a value as the result of IterateLetNext (typ. an empty sequence)
-        // self.builder.emit_constant(sequence::Sequence::default(), span);
+        // self.builder.emit_constant(sequence::Sequence::default(), span)?;
         self.compile_expr(&iterate_let_next.return_expr)?;
         Ok(())
     }
@@ -815,7 +810,7 @@ impl<'a> FunctionCompiler<'a> {
 
         self.compile_sequence_loop_iterate(loop_start, &quantified.context_names, span)?;
 
-        self.builder.patch_jump(loop_end);
+        self.builder.patch_jump(loop_end, span)?;
 
         // if we reached the end, without jumping out
         self.compile_sequence_loop_end(span);
@@ -824,11 +819,11 @@ impl<'a> FunctionCompiler<'a> {
             ir::Quantifier::Some => false.into(),
             ir::Quantifier::Every => true.into(),
         };
-        self.builder.emit_constant(reached_end_value, span);
+        self.builder.emit_constant(reached_end_value, span)?;
         let end = self.builder.emit_jump_forward(JumpCondition::Always, span);
 
         // we jumped out
-        self.builder.patch_jump(jump_out_end);
+        self.builder.patch_jump(jump_out_end, span)?;
         // clean up quantifier variable
         self.builder.emit(Instruction::Pop, span);
         self.compile_sequence_loop_end(span);
@@ -838,9 +833,9 @@ impl<'a> FunctionCompiler<'a> {
             ir::Quantifier::Every => false.into(),
         };
         // if we jumped out, we set satisfies to true
-        self.builder.emit_constant(jumped_out_value, span);
+        self.builder.emit_constant(jumped_out_value, span)?;
 
-        self.builder.patch_jump(end);
+        self.builder.patch_jump(end, span)?;
         // pop sequence length name & index
         self.scopes.pop_name();
         self.scopes.pop_name();
@@ -859,7 +854,7 @@ impl<'a> FunctionCompiler<'a> {
         self.builder.emit(Instruction::SequenceLen, span);
 
         // place index on stack
-        self.builder.emit_constant(ibig!(1).into(), span);
+        self.builder.emit_constant(ibig!(1).into(), span)?;
         self.scopes.push_name(&context_names.position);
 
         let loop_start_ref = self.builder.loop_start();
@@ -895,11 +890,11 @@ impl<'a> FunctionCompiler<'a> {
     ) -> error::SpannedResult<()> {
         // update index with 1
         self.compile_variable(&context_names.position, span)?;
-        self.builder.emit_constant(ibig!(1).into(), span);
+        self.builder.emit_constant(ibig!(1).into(), span)?;
         self.builder.emit(Instruction::Add, span);
         self.compile_variable_set(&context_names.position, span)?;
         self.builder
-            .emit_jump_backward(loop_start, JumpCondition::Always, span);
+            .emit_jump_backward(loop_start, JumpCondition::Always, span)?;
         Ok(())
     }
 
@@ -1021,13 +1016,15 @@ impl<'a> FunctionCompiler<'a> {
             todo!("#current mode not handled yet")
         };
         if let Some(mode_id) = mode_id {
+            let mode_id =
+                u16::try_from(mode_id.get()).map_err(|_| Error::XPDY0130.with_span(span))?;
             self.builder
-                .emit(Instruction::ApplyTemplates(mode_id.get() as u16), span);
+                .emit(Instruction::ApplyTemplates(mode_id), span);
         } else {
             // the mode was never used by any templates, so compile the empty
             // sequence
             self.builder
-                .emit_constant(sequence::Sequence::default(), span);
+                .emit_constant(sequence::Sequence::default(), span)?;
         }
         Ok(())
     }
@@ -1069,7 +1066,7 @@ impl<'a> FunctionCompiler<'a> {
         // It was numeric, we have on the stack a position to compare with
         self.compile_variable(&predicate.context_names.position, span)?;
         self.builder.emit(Instruction::Eq, span);
-        self.builder.patch_jump(is_not_numeric);
+        self.builder.patch_jump(is_not_numeric, span)?;
         Ok(())
     }
 }

@@ -1230,3 +1230,28 @@ fn test_basic_iterate_params() {
         "<o><baz>1</baz><baz>2</baz><baz>4</baz></o>"
     );
 }
+
+// `fn:concat` takes 2 to 99 arguments, so an attribute value template of
+// more parts than that is an implementation limit (XPDY0130). It used to
+// panic, and from 256 parts on its count wrapped around a `u8`.
+#[test]
+fn test_value_template_with_more_parts_than_concat_takes() {
+    let stylesheet = |parts: usize| {
+        let template = (0..parts).map(|i| format!("{{{i}}}")).collect::<String>();
+        format!(
+            r#"
+<xsl:transform xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="3">
+  <xsl:template match="/"><a b="{template}"/></xsl:template>
+</xsl:transform>"#
+        )
+    };
+    let mut xot = Xot::new();
+    let output = evaluate(&mut xot, "<doc/>", &stylesheet(99)).unwrap();
+    let expected = (0..99).map(|i| i.to_string()).collect::<String>();
+    assert_eq!(xml(&xot, output), format!(r#"<a b="{expected}"/>"#));
+    for parts in [100, 256, 257] {
+        let static_context = xee_interpreter::context::StaticContext::default();
+        let error = xee_xslt_compiler::parse(static_context, &stylesheet(parts)).unwrap_err();
+        assert_eq!(error.error, error::Error::XPDY0130, "{parts} parts");
+    }
+}

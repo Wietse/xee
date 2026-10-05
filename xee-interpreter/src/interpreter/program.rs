@@ -66,6 +66,11 @@ impl Program {
         Runnable::new(self, dynamic_context)
     }
 
+    /// The number of inline functions added so far.
+    pub fn function_count(&self) -> usize {
+        self.functions.len()
+    }
+
     pub fn add_function(
         &mut self,
         function: function::InlineFunction,

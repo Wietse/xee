@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 cargo test
 cargo run --bin xee-testrunner -- check vendor/xpath-tests/
 cargo run --bin xee-testrunner -- check vendor/xslt-tests/

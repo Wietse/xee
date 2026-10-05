@@ -25,7 +25,7 @@ jobs:
     name: Cargo Build & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Install the toolchain rust-toolchain.toml pins (channel, components,
       # profile) rather than floating on `stable`; without a toolchain name,
       # `rustup toolchain install` installs what that file names.

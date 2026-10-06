@@ -47,6 +47,7 @@ pub enum Expr {
     MapConstructor(MapConstructor),
     ArrayConstructor(ArrayConstructor),
     Sequence(Sequence),
+    NodeSet(NodeSet),
     XmlName(XmlName),
     XmlDocument(XmlRoot),
     XmlElement(XmlElement),
@@ -287,6 +288,23 @@ pub enum ArrayConstructor {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sequence {
     pub items: Vec<ExprS>,
+}
+
+/// The union, or the intersection, of two or more node sequences: the
+/// nodes in any, or in every, operand, without duplicates and in document
+/// order. Each operand is an expression of its own, so its bindings end
+/// with it. Both operators are associative and commutative, so the
+/// compiler may group the operands as it likes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeSet {
+    pub operator: NodeSetOperator,
+    pub operands: Vec<ExprS>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NodeSetOperator {
+    Union,
+    Intersect,
 }
 
 // These are extensions to the IR that are only used by XSLT

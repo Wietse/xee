@@ -52,3 +52,19 @@ fn test_right_right_side() {
     //                    10          22
     assert_eq!(span(run(expr)), (10..23).into());
 }
+
+// Every step of a union, intersect or except chain carries the whole
+// chain's span: the steps are joined in an order the source does not show.
+#[test]
+fn test_node_set_chain() {
+    let expr = "1 | 2 | 3";
+    //          012345678
+    assert_eq!(span(run(expr)), (0..9).into());
+    let expr = "1 except 2 except 3";
+    //          0123456789012345678
+    assert_eq!(span(run(expr)), (0..19).into());
+    // the first two are joined as they come, the third at the end
+    let expr = "() | () | 1";
+    //          01234567890
+    assert_eq!(span(run(expr)), (0..11).into());
+}

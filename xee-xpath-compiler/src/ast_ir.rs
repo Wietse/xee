@@ -1,3 +1,5 @@
+use std::iter;
+
 use xee_interpreter::{context, error, error::Error, function, xml};
 use xee_ir::{ir, ir::AtomS, Binding, Bindings, Variables};
 use xee_schema_type::Xs;
@@ -315,11 +317,12 @@ impl<'a> IrConverter<'a> {
             return self.expr_single(expr_single);
         }
         // Each item is lowered to an expression of its own, and one sequence
-        // is built from all of them (see `ir::Sequence`).
-        let items = exprs
-            .iter()
-            .map(|expr_single| Ok(self.expr_single(expr_single)?.expr()))
-            .collect::<error::SpannedResult<Vec<_>>>()?;
+        // is built from all of them (see `ir::Sequence`). A loop, as in
+        // `node_set`: a nested sequence recurses through here.
+        let mut items = Vec::with_capacity(exprs.len());
+        for expr_single in exprs {
+            items.push(self.expr_single(expr_single)?.expr());
+        }
         let span_end = exprs
             .last()
             .map_or(span.end, |expr_single| expr_single.span.end);
@@ -347,6 +350,10 @@ impl<'a> IrConverter<'a> {
     fn binary_expr(&mut self, ast: &ast::BinaryExpr, span: Span) -> error::SpannedResult<Bindings> {
         match ast.operator {
             ast::BinaryOperator::And | ast::BinaryOperator::Or => self.logical_expr(ast, span),
+            ast::BinaryOperator::Union => self.union_expr(ast, span),
+            ast::BinaryOperator::Intersect | ast::BinaryOperator::Except => {
+                self.intersect_except_expr(ast, span)
+            }
             _ => {
                 let mut left_bindings = self.path_expr(&ast.left)?;
                 let mut right_bindings = self.path_expr(&ast.right)?;
@@ -361,6 +368,87 @@ impl<'a> IrConverter<'a> {
                 Ok(left_bindings.concat(right_bindings).bind(binding))
             }
         }
+    }
+
+    /// A union chain, `a | b | c …`, is one node set of all its operands,
+    /// as the grouping makes no difference to a union's result (XPath 3.1
+    /// 3.4.2).
+    fn union_expr(&mut self, ast: &ast::BinaryExpr, span: Span) -> error::SpannedResult<Bindings> {
+        let (first, rest) = chain(ast, |operator| operator == ast::BinaryOperator::Union);
+        let operands = iter::once(first)
+            .chain(rest.into_iter().map(|(_, operand)| operand))
+            .collect::<Vec<_>>();
+        self.node_set(ir::NodeSetOperator::Union, &operands, span)
+    }
+
+    /// An intersect and except chain, `a intersect b except c …`, is
+    /// grouped from the left (XPath 3.1 3.4.2), but as sets its result is
+    /// the intersection of `a` and every operand after an `intersect`,
+    /// except the union of every operand after an `except`, and that is how
+    /// it is lowered. Each operand is evaluated once, those of each kind in
+    /// their order; XPath 3.1 2.3.4 leaves the order of evaluation free.
+    /// Folded from the left, an `except` step hashed and sorted what was
+    /// left of `a`, so removing nodes one by one took time quadratic in
+    /// their number.
+    fn intersect_except_expr(
+        &mut self,
+        ast: &ast::BinaryExpr,
+        span: Span,
+    ) -> error::SpannedResult<Bindings> {
+        let (first, rest) = chain(ast, |operator| {
+            matches!(
+                operator,
+                ast::BinaryOperator::Intersect | ast::BinaryOperator::Except
+            )
+        });
+        let mut kept = vec![first];
+        let mut removed = Vec::new();
+        for (operator, operand) in rest {
+            match operator {
+                ast::BinaryOperator::Intersect => kept.push(operand),
+                ast::BinaryOperator::Except => removed.push(operand),
+                _ => unreachable!("an intersect except chain has no other operator"),
+            }
+        }
+        let mut kept_bindings = self.node_set(ir::NodeSetOperator::Intersect, &kept, span)?;
+        if removed.is_empty() {
+            return Ok(kept_bindings);
+        }
+        let mut removed_bindings = self.node_set(ir::NodeSetOperator::Union, &removed, span)?;
+        let expr = ir::Expr::Binary(ir::Binary {
+            left: kept_bindings.atom(),
+            op: ast::BinaryOperator::Except,
+            right: removed_bindings.atom(),
+        });
+        let binding = self.variables.new_binding(expr, span);
+        Ok(kept_bindings.concat(removed_bindings).bind(binding))
+    }
+
+    /// The union or intersection of `operands`; a single operand is
+    /// itself.
+    fn node_set(
+        &mut self,
+        operator: ir::NodeSetOperator,
+        operands: &[&ast::PathExpr],
+        span: Span,
+    ) -> error::SpannedResult<Bindings> {
+        if let [operand] = operands {
+            return self.path_expr(operand);
+        }
+        // A loop, not a collecting iterator: lowering an operand that is
+        // itself a parenthesized chain recurses through here, and the
+        // iterator adapters' frames took about a sixth more stack per level
+        // than this loop.
+        let mut lowered = Vec::with_capacity(operands.len());
+        for operand in operands {
+            lowered.push(self.path_expr(operand)?.expr());
+        }
+        let expr = ir::Expr::NodeSet(ir::NodeSet {
+            operator,
+            operands: lowered,
+        });
+        let binding = self.variables.new_binding(expr, span);
+        Ok(Bindings::new(binding))
     }
 
     /// Lower `and` / `or` to conditionals so that evaluation short-circuits
@@ -828,6 +916,54 @@ impl<'a> IrConverter<'a> {
     }
 }
 
+/// The operands of the chain of operators that `ast` ends, left to right,
+/// each after the first with the operator before it. The parser groups a
+/// chain from the left, `a | b | c` as `(a | b) | c`, so the chain runs down
+/// the left operands while their operator is `in_chain`. It is walked in a
+/// loop: lowering it by recursion took a stack frame per operand.
+fn chain(
+    ast: &ast::BinaryExpr,
+    in_chain: impl Fn(ast::BinaryOperator) -> bool,
+) -> (&ast::PathExpr, Vec<(ast::BinaryOperator, &ast::PathExpr)>) {
+    let mut rest = Vec::new();
+    let mut link = ast;
+    loop {
+        rest.push((link.operator, &link.right));
+        match chained_binary(&link.left) {
+            Some(left) if in_chain(left.operator) => link = left,
+            _ => break,
+        }
+    }
+    rest.reverse();
+    (&link.left, rest)
+}
+
+/// The binary expression that is the left operand of a binary expression
+/// in the same chain: the parser wraps it as the only step of a path, a
+/// primary expression of one item. An operand the source parenthesizes is
+/// wrapped once more, as a path, so it is not a link in the chain.
+fn chained_binary(path: &ast::PathExpr) -> Option<&ast::BinaryExpr> {
+    let [step] = path.steps.as_slice() else {
+        return None;
+    };
+    let ast::StepExpr::PrimaryExpr(primary) = &step.value else {
+        return None;
+    };
+    let ast::PrimaryExpr::Expr(Spanned {
+        value: Some(expr), ..
+    }) = &primary.value
+    else {
+        return None;
+    };
+    match expr.0.as_slice() {
+        [Spanned {
+            value: ast::ExprSingle::Binary(binary),
+            ..
+        }] => Some(binary),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -867,6 +1003,25 @@ mod tests {
     #[test]
     fn test_if() {
         assert_debug_snapshot!(convert_expr_single("if (1 gt 2) then 1 + 2 else 3 + 4"));
+    }
+
+    // a union chain is one node set of all its operands
+    #[test]
+    fn test_union_chain() {
+        assert_debug_snapshot!(convert_expr_single("1 | 2 union 3"));
+    }
+
+    // a parenthesized union is an operand of its own
+    #[test]
+    fn test_union_parenthesized() {
+        assert_debug_snapshot!(convert_expr_single("(1 | 2) | 3"));
+    }
+
+    // the intersection of the operands kept, except the union of those
+    // removed
+    #[test]
+    fn test_intersect_except_chain() {
+        assert_debug_snapshot!(convert_expr_single("1 except 2 intersect 3 except 4"));
     }
 
     // and/or lower to nested conditionals (short-circuit); the right

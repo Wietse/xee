@@ -11,7 +11,15 @@
 mod counting;
 
 use counting::{bytes, Measure};
-use xee_xpath::{Documents, Queries, Query};
+use xee_xpath::{Documents, Itemable, Queries, Query};
+
+// An expression, the integer it must evaluate to, and the document that is
+// its context item, if it reads one.
+struct Case {
+    src: String,
+    expected: usize,
+    document: Option<String>,
+}
 
 // Compiles `make(size)`, which returns an expression and the integer it must
 // evaluate to, then evaluates it at sizes n, 2n and 4n on a thread with a
@@ -28,16 +36,45 @@ fn assert_linear_in(
     n: usize,
     make: fn(usize) -> (String, usize),
 ) {
+    assert_linear_cases(measures, what, n, move |size| {
+        let (src, expected) = make(size);
+        Case {
+            src,
+            expected,
+            document: None,
+        }
+    })
+}
+
+// As `assert_linear_in`, for a `Case`. Its document is parsed, and the
+// query run once on it, before the evaluation is measured, so that neither
+// parsing the document nor annotating its document order, which the first
+// sort does, hides the evaluation's own growth.
+fn assert_linear_cases(
+    measures: &'static [Measure],
+    what: &'static str,
+    n: usize,
+    make: impl Fn(usize) -> Case + Send + 'static,
+) {
     let counts = std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
         .spawn(move || {
             let evaluate = |size: usize, measure: Option<Measure>| {
-                let (src, expected) = make(size);
+                let Case {
+                    src,
+                    expected,
+                    document,
+                } = make(size);
                 let queries = Queries::default();
                 let src = format!("string({src})");
                 let query = queries.one(&src, |_, item| Ok(item.clone())).unwrap();
                 let mut documents = Documents::new();
-                let builder = query.dynamic_context_builder(&documents);
+                let document = document.map(|xml| documents.add_string_without_uri(&xml).unwrap());
+                let has_document = document.is_some();
+                let mut builder = query.dynamic_context_builder(&documents);
+                if let Some(document) = document {
+                    builder.context_item(document.to_item(&documents).unwrap());
+                }
                 let context = builder.build();
                 let mut run = || {
                     let item = query.execute_with_context(&mut documents, &context);
@@ -45,6 +82,9 @@ fn assert_linear_in(
                     let value = item.to_atomic().unwrap().to_string().unwrap();
                     assert_eq!(value, expected.to_string(), "{what} at size {size}");
                 };
+                if has_document {
+                    run();
+                }
                 match measure {
                     Some(measure) => bytes(measure, run),
                     None => {
@@ -115,6 +155,82 @@ fn a_sequence_of_sequences() {
     assert_linear("a sequence of sequences", 250, |n| {
         let items = comma_separated(n, |i| format!("({i}, {i})"));
         (format!("count(({items}))"), 2 * n)
+    });
+}
+
+// `count(body)`, which must be `expected`, with `n` distinct element nodes
+// bound to `$c`.
+fn count_over_nodes(n: usize, body: String, expected: usize) -> Case {
+    Case {
+        src: format!("let $c := /r/a return count({body})"),
+        expected,
+        document: Some(format!("<r>{}</r>", "<a/>".repeat(n))),
+    }
+}
+
+fn chain(n: usize, operator: &str, operand: impl Fn(usize) -> String) -> String {
+    (1..=n).map(operand).collect::<Vec<_>>().join(operator)
+}
+
+// The i-th node of `$c`. A filter, `$c[i]`, allocates for every node of
+// `$c` it visits, which would grow quadratically on its own.
+fn nth(i: usize) -> String {
+    format!("subsequence($c, {i}, 1)")
+}
+
+const BOTH: [Measure; 2] = [Measure::Peak, Measure::Allocated];
+
+// A union chain was evaluated as a left fold of two-operand unions, each
+// held in a local until the end of the expression, and each hashing and
+// sorting every node before it: memory and time quadratic in its length
+// (10,000 distinct nodes: 10.6 s and 1.58 GB in release).
+#[test]
+fn a_union_of_distinct_nodes() {
+    assert_linear_cases(&BOTH, "a union of distinct nodes", 500, |n| {
+        count_over_nodes(n, chain(n, " | ", nth), n)
+    });
+}
+
+// Every operand here is the same n nodes, so each union's result is as long
+// as the operands, and the bytes allocated grow quadratically however the
+// unions are grouped. The most held at once, about log2(n) results of n
+// nodes waiting to be joined, grows as n log n.
+#[test]
+fn a_union_of_references() {
+    assert_linear_cases(&[Measure::Peak], "a union of references", 250, |n| {
+        count_over_nodes(n, chain(n, " | ", |_| "$c".to_string()), n)
+    });
+}
+
+// An except chain was a left fold too: each step held its result until the
+// end of the expression and hashed and sorted what was left of the first
+// operand, so removing nodes one by one took memory and time quadratic in
+// the number removed.
+#[test]
+fn an_except_chain() {
+    assert_linear_cases(&BOTH, "an except chain", 500, |n| {
+        let removed = chain(n, " except ", |i| nth(2 * i));
+        count_over_nodes(2 * n, format!("$c except {removed}"), n)
+    });
+}
+
+// Each intersection here is as long as its operands, as with the union of
+// references above.
+#[test]
+fn an_intersect_chain() {
+    assert_linear_cases(&[Measure::Peak], "an intersect chain", 250, |n| {
+        count_over_nodes(n, chain(n, " intersect ", |_| "$c".to_string()), n)
+    });
+}
+
+// Intersections with all of `$c` and removals of one node, alternating:
+// folded from the left, every step's result, nearly all of `$c`, was held
+// until the end of the expression.
+#[test]
+fn an_intersect_except_chain() {
+    assert_linear_cases(&[Measure::Peak], "an intersect except chain", 250, |n| {
+        let steps = chain(n, " ", |i| format!("intersect $c except {}", nth(i)));
+        count_over_nodes(2 * n, format!("$c {steps}"), n)
     });
 }
 

@@ -1,0 +1,55 @@
+---
+source: xee-xpath-compiler/src/ast_ir.rs
+expression: "convert_expr_single(\"1 | 2 union 3\")"
+---
+Ok(
+    Spanned {
+        value: NodeSet(
+            NodeSet {
+                operator: Union,
+                operands: [
+                    Spanned {
+                        value: Atom(
+                            Spanned {
+                                value: Const(
+                                    Integer(
+                                        1,
+                                    ),
+                                ),
+                                span: 0..1,
+                            },
+                        ),
+                        span: 0..1,
+                    },
+                    Spanned {
+                        value: Atom(
+                            Spanned {
+                                value: Const(
+                                    Integer(
+                                        2,
+                                    ),
+                                ),
+                                span: 4..5,
+                            },
+                        ),
+                        span: 4..5,
+                    },
+                    Spanned {
+                        value: Atom(
+                            Spanned {
+                                value: Const(
+                                    Integer(
+                                        3,
+                                    ),
+                                ),
+                                span: 12..13,
+                            },
+                        ),
+                        span: 12..13,
+                    },
+                ],
+            },
+        ),
+        span: 0..13,
+    },
+)

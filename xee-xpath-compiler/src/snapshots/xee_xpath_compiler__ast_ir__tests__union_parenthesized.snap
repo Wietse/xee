@@ -1,0 +1,65 @@
+---
+source: xee-xpath-compiler/src/ast_ir.rs
+expression: "convert_expr_single(\"(1 | 2) | 3\")"
+---
+Ok(
+    Spanned {
+        value: NodeSet(
+            NodeSet {
+                operator: Union,
+                operands: [
+                    Spanned {
+                        value: NodeSet(
+                            NodeSet {
+                                operator: Union,
+                                operands: [
+                                    Spanned {
+                                        value: Atom(
+                                            Spanned {
+                                                value: Const(
+                                                    Integer(
+                                                        1,
+                                                    ),
+                                                ),
+                                                span: 1..2,
+                                            },
+                                        ),
+                                        span: 1..2,
+                                    },
+                                    Spanned {
+                                        value: Atom(
+                                            Spanned {
+                                                value: Const(
+                                                    Integer(
+                                                        2,
+                                                    ),
+                                                ),
+                                                span: 5..6,
+                                            },
+                                        ),
+                                        span: 5..6,
+                                    },
+                                ],
+                            },
+                        ),
+                        span: 1..6,
+                    },
+                    Spanned {
+                        value: Atom(
+                            Spanned {
+                                value: Const(
+                                    Integer(
+                                        3,
+                                    ),
+                                ),
+                                span: 10..11,
+                            },
+                        ),
+                        span: 10..11,
+                    },
+                ],
+            },
+        ),
+        span: 0..11,
+    },
+)

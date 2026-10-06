@@ -77,6 +77,7 @@ impl<'a> FunctionCompiler<'a> {
                 self.compile_array_constructor(array_constructor, span)
             }
             ir::Expr::Sequence(sequence) => self.compile_sequence(sequence, span),
+            ir::Expr::NodeSet(node_set) => self.compile_node_set(node_set, span),
             ir::Expr::XmlName(xml_name) => self.compile_xml_name(xml_name, span),
             ir::Expr::XmlDocument(root) => self.compile_xml_document(root, span),
             ir::Expr::XmlElement(element) => self.compile_xml_element(element, span),
@@ -543,18 +544,13 @@ impl<'a> FunctionCompiler<'a> {
         Ok(())
     }
 
-    // Each item is evaluated in order, its bindings ending with it, and the
-    // values are concatenated on the stack as a binary counter does: after
-    // the i-th item, one `Comma` for each trailing zero bit of i joins two
-    // runs of equal length, and the runs left at the end are joined last.
-    // The stack holds about log2(n) runs, and each item is copied about
-    // log2(n) times. Lowering the items to a chain of two-item
-    // concatenations, each bound to a local, held every intermediate
-    // sequence until the end of the expression (memory quadratic in the
-    // number of items), and copied what came before at each step (time
-    // quadratic). `Comma` keeps `Sequence::concat`'s semantics, which merge
-    // consecutive ranges; concatenation is associative, so the grouping
-    // does not change the result.
+    // Lowering the items to a chain of two-item concatenations, each bound to
+    // a local, held every intermediate sequence until the end of the
+    // expression (memory quadratic in the number of items), and copied what
+    // came before at each step (time quadratic). `Comma` keeps
+    // `Sequence::concat`'s semantics, which merge consecutive ranges;
+    // concatenation is associative, so the grouping does not change the
+    // result.
     fn compile_sequence(
         &mut self,
         sequence: &ir::Sequence,
@@ -566,15 +562,50 @@ impl<'a> FunctionCompiler<'a> {
                 (0..0).into(),
             ));
         }
+        self.compile_joined(&sequence.items, Instruction::Comma, span)
+    }
+
+    // Folded from the left, each step bound to a local, a chain held every
+    // intermediate node sequence until the end of the expression, and a
+    // union hashed and sorted every node before it at each step: memory and
+    // time quadratic in the number of operands.
+    fn compile_node_set(
+        &mut self,
+        node_set: &ir::NodeSet,
+        span: SourceSpan,
+    ) -> error::SpannedResult<()> {
+        // A single operand would reach no set operation, so its value would
+        // be neither checked for nodes nor sorted.
+        debug_assert!(node_set.operands.len() >= 2, "a node set of one operand");
+        let join = match node_set.operator {
+            ir::NodeSetOperator::Union => Instruction::Union,
+            ir::NodeSetOperator::Intersect => Instruction::Intersect,
+        };
+        self.compile_joined(&node_set.operands, join, span)
+    }
+
+    // Each item is evaluated in order, its bindings ending with it, and the
+    // values are joined on the stack with `join`, two at a time, as a binary
+    // counter carries: after the i-th item, one `join` for each trailing
+    // zero bit of i joins two runs of equal length, and the runs left at
+    // the end are joined last. The stack holds about log2(n) runs, and each
+    // item takes part in about log2(n) joins. So `join` must be associative.
+    // `items` is not empty.
+    fn compile_joined(
+        &mut self,
+        items: &[ir::ExprS],
+        join: Instruction,
+        span: SourceSpan,
+    ) -> error::SpannedResult<()> {
         // A local's slot is its place on the stack, so each run waiting there
         // holds a slot of its own, under a name nothing looks up: an item's
         // own locals then sit where their names say.
         let waiting = ir::Name::new(String::new());
         let mut named = 0;
-        for (i, item) in sequence.items.iter().enumerate() {
+        for (i, item) in items.iter().enumerate() {
             self.compile_expr(item)?;
             for _ in 0..(i + 1).trailing_zeros() {
-                self.builder.emit(Instruction::Comma, span);
+                self.builder.emit(join.clone(), span);
             }
             let runs = (i + 1).count_ones();
             while named < runs {
@@ -586,8 +617,8 @@ impl<'a> FunctionCompiler<'a> {
                 named -= 1;
             }
         }
-        for _ in 1..sequence.items.len().count_ones() {
-            self.builder.emit(Instruction::Comma, span);
+        for _ in 1..items.len().count_ones() {
+            self.builder.emit(join.clone(), span);
         }
         for _ in 0..named {
             self.scopes.pop_name();

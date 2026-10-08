@@ -27,3 +27,31 @@ intermediate string: 20,000 terms (160 KB) take 516 MB, quadratic in its
 length (release, measured 2026-10-05). Concatenation is associative, so
 the chain could be one expression of all its operands, joined as a comma
 sequence's items are (`compile_joined`) or concatenated at once.
+
+## Upgrade: thirteen breaking dependency majors
+
+xee's dependencies have thirteen breaking majors outstanding, found by
+`xbrlstd-rs`'s 2026-09 upgrade round in its survey of this fork
+(`cargo update --dry-run --verbose` on `main` at `61e4fb9b`, 2026-10-02;
+`docs/archive/plan-upgrade-2026-09.md` there, *Survey of the xee fork*;
+`base64`, the fourteenth, has since moved) and deferred there, since a round fits between two Rust
+releases. Nine reach `xbrlstd-rs`'s build: `icu` 1.5 → 2 with
+`icu_provider_adapters`, `syn` 2 → 3, `logos` 0.15 → 0.16, `itertools`
+0.14 → 0.15, `strum` 0.27 → 0.28, `num-derive` 0.4 → 0.5, and `rand` 0.8 →
+0.10 with `rand_xoshiro` 0.6 → 0.8; four are xee's alone: `ariadne`,
+`rustyline`, `crossterm` and `ron`. A fix is one major per change: the
+whole changelog span read, the per-test verdicts of both conformance
+suites compared before and after, and, for the nine, the `xbrlstd-rs` rev
+bump that takes them, with its own gate.
+
+## Refresh: the vendored W3C test suites
+
+The vendored suites lag upstream: `xpath-tests/` is `w3c/qt3tests` at
+`f8987877` (2024-05-16) and `xslt-tests/` is `w3c/xslt30-test` at
+`1fcf15b0` (2023-11-17), as `vendor/README.md` records, and upstream had
+25 and 34 commits beyond them on 2026-10-03, when the round recorded that
+provenance. A refresh moves
+verdicts by construction, which is why `xbrlstd-rs`'s 2026-09 round
+deferred it. A fix moves each suite to a recorded upstream commit,
+updates `vendor/README.md`'s provenance, and explains every verdict that
+moves, before the `xbrlstd-rs` rev bump that would carry it.

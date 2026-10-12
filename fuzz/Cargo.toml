@@ -23,7 +23,7 @@ serde = "1"
 # lists that as the NUMBER_TOKEN_KEY divergence. preserve_order: object
 # members keep their source order, so the differential can compare member
 # order.
-serde_json = { version = "1.0.151", features = ["arbitrary_precision", "preserve_order"] }
+serde_json = { version = "1.0.152", features = ["arbitrary_precision", "preserve_order"] }
 
 [[bin]]
 name = "robustness"

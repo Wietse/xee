@@ -265,7 +265,7 @@ fn seed_leading_bom() {
 fn serde_number_text_is_pinned() {
     for (source, stored) in [
         ("0", "0"),
-        ("-0", "0"),
+        ("-0", "-0"),
         ("-0.0", "-0.0"),
         ("1E5", "1e+5"),
         ("1e5", "1e+5"),
@@ -295,6 +295,9 @@ fn serde_number_text_is_pinned() {
         fired(&differential_str("[1e+5, 0, -1.5]")),
         Vec::<&str>::new()
     );
+    // serde_json keeps `-0` as text (since 1.0.152), so it needs no
+    // normalisation and agrees with xee-json's source text.
+    assert_eq!(fired(&differential_str("[-0]")), Vec::<&str>::new());
 }
 
 #[test]

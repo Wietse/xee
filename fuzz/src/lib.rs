@@ -345,9 +345,8 @@ pub const VALUE_LONE_SURROGATE: Divergence = Divergence {
 pub const NUMBER_TEXT: Divergence = Divergence {
     name: "number text normalised",
     reason: "serde_json's arbitrary_precision keeps a number's text but writes \
-             the exponent marker as 'e' with an explicit sign, and stores an \
-             integer that fits i64/u64 as that integer, so '-0' becomes '0'; \
-             xee-json delivers the source text",
+             the exponent marker as 'e' with an explicit sign; xee-json \
+             delivers the source text",
     explained_by: "apply that normalisation to xee-json's text \
                    (serde_number_text) and require equality",
 };
@@ -932,21 +931,12 @@ pub fn flatten_value(value: &Value) -> Vec<Flat> {
 }
 
 /// A valid number's text as serde_json's `arbitrary_precision` stores it
-/// ([`NUMBER_TEXT`]): an integer that fits `u64` (non-negative) or `i64`
-/// (negative) as that integer's decimal form; otherwise the source text
-/// with the exponent marker as `e` and an explicit exponent sign.
+/// ([`NUMBER_TEXT`]): the source text with the exponent marker as `e` and an
+/// explicit exponent sign. An integer's text is stored as written: serde_json
+/// parses an integer that fits `u64` or `i64` and prints it back, which gives
+/// a valid JSON integer's own text, and since 1.0.152 it keeps `-0`, the one
+/// integer that would lose its sign, as text.
 pub fn serde_number_text(number: &str) -> String {
-    if let Some(digits) = number.strip_prefix('-') {
-        if digits.bytes().all(|b| b.is_ascii_digit()) {
-            if let Ok(integer) = number.parse::<i64>() {
-                return integer.to_string();
-            }
-        }
-    } else if number.bytes().all(|b| b.is_ascii_digit()) {
-        if let Ok(integer) = number.parse::<u64>() {
-            return integer.to_string();
-        }
-    }
     let mut normal = String::with_capacity(number.len() + 1);
     let mut after_marker = false;
     for c in number.chars() {

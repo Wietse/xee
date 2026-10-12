@@ -20,10 +20,13 @@ env:
   # disable debug info to increase caching efficiency
   CARGO_PROFILE_TEST_DEBUG: 0
 
+# Every job names its runner's Ubuntu release (ubuntu-24.04), not ubuntu-latest,
+# so a move to a new release is a commit here. GitHub still updates the
+# image's software weekly and retires a label on its own schedule.
 jobs:
   build_and_test:
     name: Cargo Build & Test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       # Install the toolchain rust-toolchain.toml pins (channel, components,

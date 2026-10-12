@@ -35,10 +35,13 @@ on:
 permissions:
   contents: read
 
+# Every job names its runner's Ubuntu release (ubuntu-24.04), not ubuntu-latest,
+# so a move to a new release is a commit here. GitHub still updates the
+# image's software weekly and retires a label on its own schedule.
 jobs:
   audit:
     name: cargo audit (RustSec)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # cargo-audit runs `cargo -V` for its yanked-crate check; inside the tree
     # rustup would resolve that to the rust-toolchain.toml pin and install it
     # for a lockfile scan that needs no compiler. Point it at the runner's

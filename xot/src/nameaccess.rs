@@ -1,6 +1,4 @@
 use ahash::{HashMap, HashSet};
-use genawaiter::rc::gen;
-use genawaiter::yield_;
 
 use crate::access::NodeEdge;
 use crate::error::Error;
@@ -857,32 +855,32 @@ pub(crate) fn namespace_traverse(
     xot: &Xot,
     node: Node,
 ) -> impl Iterator<Item = (PrefixId, NamespaceId)> + '_ {
-    gen!({
-        let mut seen: Vec<PrefixId> = Vec::new();
+    let mut seen: Vec<PrefixId> = Vec::new();
 
-        for ancestor in xot.ancestors(node) {
-            let namespaces = xot.namespaces(ancestor);
-            for (prefix_id, namespace_id) in namespaces.iter() {
-                if seen.contains(&prefix_id) {
-                    continue;
-                }
-                let undeclaration =
-                    xot.empty_prefix() == prefix_id && *namespace_id == xot.no_namespace();
-                seen.push(prefix_id);
-                if !undeclaration {
-                    yield_!((prefix_id, *namespace_id));
-                }
-            }
-        }
-        for (prefix_id, namespace_id) in xot.base_prefixes() {
+    // each declaration, with whether it is an undeclaration; the base
+    // prefixes are never one
+    let declared = xot
+        .ancestors(node)
+        .flat_map(move |ancestor| xot.namespaces(ancestor).to_vec())
+        .map(move |(prefix_id, namespace_id)| {
+            let undeclaration =
+                xot.empty_prefix() == prefix_id && namespace_id == xot.no_namespace();
+            (prefix_id, namespace_id, undeclaration)
+        });
+    let base = xot
+        .base_prefixes()
+        .into_iter()
+        .map(|(prefix_id, namespace_id)| (prefix_id, namespace_id, false));
+
+    declared
+        .chain(base)
+        .filter_map(move |(prefix_id, namespace_id, undeclaration)| {
             if seen.contains(&prefix_id) {
-                continue;
+                return None;
             }
             seen.push(prefix_id);
-            yield_!((prefix_id, namespace_id));
-        }
-    })
-    .into_iter()
+            (!undeclaration).then_some((prefix_id, namespace_id))
+        })
 }
 
 #[cfg(test)]

@@ -1,6 +1,3 @@
-use genawaiter::rc::gen;
-use genawaiter::yield_;
-
 use crate::access::NodeEdge;
 use crate::id::{NameId, NamespaceId, PrefixId};
 use crate::xmlvalue::Element;
@@ -35,82 +32,72 @@ pub enum Output<'a> {
 }
 
 pub(crate) fn gen_outputs(xot: &Xot, node: Node) -> impl Iterator<Item = (Node, Output<'_>)> + '_ {
-    gen!({
-        for edge in xot.traverse(node) {
-            match edge {
-                NodeEdge::Start(current_node) => {
-                    let gen = gen_edge_start(xot, node, current_node);
-                    for output in gen {
-                        yield_!((current_node, output));
-                    }
-                }
-                NodeEdge::End(current_node) => {
-                    let gen = gen_edge_end(xot, current_node);
-                    for output in gen {
-                        yield_!((current_node, output));
-                    }
-                }
+    xot.traverse(node).flat_map(move |edge| {
+        let (current_node, outputs) = match edge {
+            NodeEdge::Start(current_node) => {
+                (current_node, gen_edge_start(xot, node, current_node))
             }
-        }
+            NodeEdge::End(current_node) => (current_node, gen_edge_end(xot, current_node)),
+        };
+        outputs
+            .into_iter()
+            .map(move |output| (current_node, output))
     })
-    .into_iter()
 }
 
-fn gen_edge_start(xot: &Xot, top_node: Node, node: Node) -> impl Iterator<Item = Output<'_>> + '_ {
-    gen!({
-        let value = xot.value(node);
+fn gen_edge_start(xot: &Xot, top_node: Node, node: Node) -> Vec<Output<'_>> {
+    let mut outputs = Vec::new();
+    let value = xot.value(node);
 
-        match value {
-            Value::Document => {}
-            Value::Element(element) => {
-                yield_!(Output::StartTagOpen(*element));
+    match value {
+        Value::Document => {}
+        Value::Element(element) => {
+            outputs.push(Output::StartTagOpen(*element));
 
-                // serialize any extra prefixes if this is the top element of
-                // an unattached tree and they aren't declared already
-                let namespaces = xot.namespaces(node);
-                if node == top_node {
-                    for (prefix_id, namespace_id) in xot.namespaces_in_scope(node) {
-                        if !namespaces.contains_key(prefix_id) {
-                            yield_!(Output::Prefix(prefix_id, namespace_id,));
-                        }
+            // serialize any extra prefixes if this is the top element of
+            // an unattached tree and they aren't declared already
+            let namespaces = xot.namespaces(node);
+            if node == top_node {
+                for (prefix_id, namespace_id) in xot.namespaces_in_scope(node) {
+                    if !namespaces.contains_key(prefix_id) {
+                        outputs.push(Output::Prefix(prefix_id, namespace_id));
                     }
                 }
+            }
 
-                for (prefix_id, namespace_id) in namespaces.iter() {
-                    yield_!(Output::Prefix(prefix_id, *namespace_id,));
-                }
+            for (prefix_id, namespace_id) in namespaces.iter() {
+                outputs.push(Output::Prefix(prefix_id, *namespace_id));
+            }
 
-                for (name_id, value) in xot.attributes(node).iter() {
-                    yield_!(Output::Attribute(name_id, value));
-                }
+            for (name_id, value) in xot.attributes(node).iter() {
+                outputs.push(Output::Attribute(name_id, value));
+            }
 
-                yield_!(Output::StartTagClose);
-            }
-            Value::Text(text) => {
-                yield_!(Output::Text(text.get()));
-            }
-            Value::Comment(comment) => {
-                yield_!(Output::Comment(comment.get()));
-            }
-            Value::ProcessingInstruction(pi) => {
-                yield_!(Output::ProcessingInstruction(pi.target(), pi.data()));
-            }
-            Value::Attribute(_) | Value::Namespace(_) => {
-                // handled in element
-            }
+            outputs.push(Output::StartTagClose);
         }
-    })
-    .into_iter()
+        Value::Text(text) => {
+            outputs.push(Output::Text(text.get()));
+        }
+        Value::Comment(comment) => {
+            outputs.push(Output::Comment(comment.get()));
+        }
+        Value::ProcessingInstruction(pi) => {
+            outputs.push(Output::ProcessingInstruction(pi.target(), pi.data()));
+        }
+        Value::Attribute(_) | Value::Namespace(_) => {
+            // handled in element
+        }
+    }
+    outputs
 }
 
-fn gen_edge_end(xot: &Xot, node: Node) -> impl Iterator<Item = Output<'_>> + '_ {
-    gen!({
-        let value = xot.value(node);
-        if let Value::Element(element) = value {
-            yield_!(Output::EndTag(*element));
-        }
-    })
-    .into_iter()
+fn gen_edge_end(xot: &Xot, node: Node) -> Vec<Output<'_>> {
+    let mut outputs = Vec::new();
+    let value = xot.value(node);
+    if let Value::Element(element) = value {
+        outputs.push(Output::EndTag(*element));
+    }
+    outputs
 }
 
 /// Output token

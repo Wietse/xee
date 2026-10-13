@@ -201,3 +201,27 @@ fn test_all_following_attribute() {
     let siblings = xot.all_following(c).collect::<Vec<_>>();
     assert_eq!(siblings, vec![d, foo, e, f, g, h]);
 }
+
+// once ended, the iterators that were generators return None again
+// (as generators they panicked)
+#[test]
+fn test_ended_iterators_stay_ended() {
+    let mut xot = Xot::new();
+    let root = xot.parse(r#"<p xmlns:a="urn:a"><b/></p>"#).unwrap();
+    let p = xot.document_element(root).unwrap();
+
+    let mut level_order = xot.level_order(root);
+    level_order.by_ref().for_each(drop);
+    assert_eq!(level_order.next(), None);
+    assert_eq!(level_order.next(), None);
+
+    let mut namespaces = xot.namespaces_in_scope(p);
+    namespaces.by_ref().for_each(drop);
+    assert_eq!(namespaces.next(), None);
+    assert_eq!(namespaces.next(), None);
+
+    let mut outputs = xot.outputs(root);
+    outputs.by_ref().for_each(drop);
+    assert!(outputs.next().is_none());
+    assert!(outputs.next().is_none());
+}

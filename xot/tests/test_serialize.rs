@@ -39,6 +39,62 @@ fn test_serialize_node_default_ns_nested() {
     );
 }
 
+// a subtree's top element declares the prefixes it inherits, nearest
+// ancestor first and in each one's declaration order, before its own;
+// the prefixes and namespaces are added first, so the order the tests
+// below expect, `b, c, a`, is no name or id order in either direction
+#[test]
+fn test_serialize_node_inherited_prefixes_in_declaration_order() {
+    let mut xot = Xot::new();
+    for prefix in ["a", "b", "c"] {
+        xot.add_prefix(prefix);
+    }
+    for namespace in ["urn:a", "urn:b", "urn:c"] {
+        xot.add_namespace(namespace);
+    }
+    let doc = xot
+        .parse(r#"<doc xmlns:b="urn:b" xmlns:c="urn:c" xmlns:a="urn:a"><p/></doc>"#)
+        .unwrap();
+    let node = xot.first_child(xot.document_element(doc).unwrap()).unwrap();
+    assert_eq!(
+        xot.to_string(node).unwrap(),
+        r#"<p xmlns:b="urn:b" xmlns:c="urn:c" xmlns:a="urn:a"/>"#
+    );
+}
+
+#[test]
+fn test_serialize_node_inherited_prefixes_nearest_ancestor_first() {
+    let mut xot = Xot::new();
+    let doc = xot
+        .parse(r#"<doc xmlns:a="urn:a"><mid xmlns:b="urn:b"><p/></mid></doc>"#)
+        .unwrap();
+    let mid = xot.first_child(xot.document_element(doc).unwrap()).unwrap();
+    let node = xot.first_child(mid).unwrap();
+    assert_eq!(
+        xot.to_string(node).unwrap(),
+        r#"<p xmlns:b="urn:b" xmlns:a="urn:a"/>"#
+    );
+}
+
+#[test]
+fn test_serialize_node_inherited_prefixes_before_own() {
+    let mut xot = Xot::new();
+    for prefix in ["a", "b", "c"] {
+        xot.add_prefix(prefix);
+    }
+    for namespace in ["urn:a", "urn:b", "urn:c"] {
+        xot.add_namespace(namespace);
+    }
+    let doc = xot
+        .parse(r#"<doc xmlns:b="urn:b"><p xmlns:c="urn:c" xmlns:a="urn:a"/></doc>"#)
+        .unwrap();
+    let node = xot.first_child(xot.document_element(doc).unwrap()).unwrap();
+    assert_eq!(
+        xot.to_string(node).unwrap(),
+        r#"<p xmlns:b="urn:b" xmlns:c="urn:c" xmlns:a="urn:a"/>"#
+    );
+}
+
 #[test]
 fn test_prefix_ambiguous() {
     let mut xot = Xot::new();

@@ -59,3 +59,19 @@ jobs:
 
       - name: Check (XSLT conformance suite)
         run: cargo run --bin xee-testrunner -- -v check vendor/xslt-tests/
+
+      # rust-cache (v2.9.2) cleans target/tests/target and target/tests/trybuild
+      # without awaiting either, so where target/tests exists and one of them
+      # is missing, the ENOENT escapes its try/catch and the action prints it
+      # as two ##[error] lines, in the restore step on a partial cache hit and
+      # in the post step that saves the cache (Swatinem/rust-cache#193; the
+      # fix is proposed in #387). trybuild, which xee-interpreter's macro_ui
+      # test runs, creates target/tests/trybuild, but nothing creates
+      # target/tests/target, so this step does, empty, and the saved cache
+      # keeps it; it names trybuild's too, since the step itself creates
+      # target/tests should trybuild stop running. It runs last, after cargo
+      # has created target/ with its CACHEDIR.TAG, and the cache is saved only
+      # when every step succeeds. Remove it once a rust-cache v2 release awaits
+      # the calls.
+      - name: Create the target/tests directories rust-cache's cleanup opens
+        run: mkdir -p target/tests/target target/tests/trybuild

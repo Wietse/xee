@@ -65,6 +65,9 @@ license terms:
   permission. Title to copyright in this work will at all times remain with
   copyright holders.
 
+* xot, located in xot/, is copyright Martijn Faassen & Paligo and is licensed
+  under the MIT license, whose text is in xot/LICENSE.txt.
+
 * Portions of internationalization code use code or data from Unicode, which
   carry the following license:
 

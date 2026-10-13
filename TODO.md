@@ -28,18 +28,19 @@ length (release, measured 2026-10-05). Concatenation is associative, so
 the chain could be one expression of all its operands, joined as a comma
 sequence's items are (`compile_joined`) or concatenated at once.
 
-## Upgrade: thirteen breaking dependency majors
+## Upgrade: fourteen breaking dependency majors
 
-xee's dependencies have thirteen breaking majors outstanding, found by
+xee's dependencies have fourteen breaking majors outstanding. Thirteen were found by
 `xbrlstd-rs`'s 2026-09 upgrade round in its survey of this fork
 (`cargo update --dry-run --verbose` on `main` at `61e4fb9b`, 2026-10-02;
 `docs/archive/plan-upgrade-2026-09.md` there, *Survey of the xee fork*;
-`base64`, the fourteenth, has since moved) and deferred there, since a round fits between two Rust
-releases. Nine reach `xbrlstd-rs`'s build: `icu` 1.5 → 2 with
+`base64`, a fourteenth then, has since moved) and deferred there, since a round fits between two Rust
+releases; `rstest` 0.16 → 0.27, a dev-dependency of `xot`, came with making
+`xot` a workspace member. Nine reach `xbrlstd-rs`'s build: `icu` 1.5 → 2 with
 `icu_provider_adapters`, `syn` 2 → 3, `logos` 0.15 → 0.16, `itertools`
 0.14 → 0.15, `strum` 0.27 → 0.28, `num-derive` 0.4 → 0.5, and `rand` 0.8 →
-0.10 with `rand_xoshiro` 0.6 → 0.8; four are xee's alone: `ariadne`,
-`rustyline`, `crossterm` and `ron`. A fix is one major per change: the
+0.10 with `rand_xoshiro` 0.6 → 0.8; five are xee's alone: `ariadne`,
+`rustyline`, `crossterm`, `ron` and `rstest`. A fix is one major per change: the
 whole changelog span read, the per-test verdicts of both conformance
 suites compared before and after, and, for the nine, the `xbrlstd-rs` rev
 bump that takes them, with its own gate.

@@ -16,6 +16,7 @@ members = [
   "xee-xslt-ast",
   "xee-testrunner",
   "xee-xslt-compiler",
+  "xot",
 ]
 # even if all crates are set to edition 2021, we still need to force the
 # resolver to 2
@@ -51,9 +52,9 @@ xee-xpath-macros = { path = "xee-xpath-macros" }
 xee-xpath-type = { path = "xee-xpath-type" }
 xee-xslt-ast = { path = "xee-xslt-ast" }
 xee-xslt-compiler = { path = "xee-xslt-compiler" }
+xot = { path = "xot" }
 
 anyhow = "1.0.97"
-xot = "0.31.2"
 ahash = "0.8.11"
 strum = { version = "0.27", features = ["derive"] }
 clap = "4.5.32"

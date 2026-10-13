@@ -25,8 +25,9 @@ xee-xpath-lexer  →  xee-xpath-ast  →  xee-xpath-compiler  →  xee-ir  →  
 - `xee-xpath-load` — loaders used by the test runner.
 - `xee` — the CLI binary (XPath REPL, pretty-print, run queries).
 - `xee-testrunner` — runs the W3C QT3 (XPath) and XSLT conformance suites vendored under `vendor/`.
+- `xot` — the XML tree xee evaluates over: parsing, traversal, manipulation and serialization. Imported from a fork of upstream `faassen/xot` (*Fork status*).
 
-External companion projects (not in this repo): `xot` (XML tree), `regexml` (regex), `xee-php` (PHP bindings).
+External companion projects (not in this repo): `regexml` (regex), `xee-php` (PHP bindings).
 
 ## Orient to the task
 
@@ -35,7 +36,7 @@ The workflow in this file follows `xbrlstd-rs`'s (`../xbrlstd-rs/AGENTS.md`), ad
 - Confirm the working directory, `git status`, branch and HEAD before editing. Other sessions work in this repository through their own worktrees and local branches (`git worktree list`): leave their branches and changes alone.
 - xee keeps no plans index, ADR set or debt register of its own; `TODO.md` lists known xee work that is not scheduled, a stopgap until it is decided whether xee needs a register. Its records live in `xbrlstd-rs`, the consumer: a decision that binds the fork or the API `xbrlstd-rs` uses is an `xbrlstd-rs` ADR (`../xbrlstd-rs/docs/decisions.md`; ADR24 is the fork itself, ADR54 the typed node values); deferred work and known divergences go in `../xbrlstd-rs/docs/technical-debt.md`, security findings on `../xbrlstd-rs/docs/security-dashboard.md`, and upgrade work into the open `xbrlstd-rs` upgrade round as `xee: …` rows (the umbrella `upgrade-tooling` skill). A commit message is never the only record of a decision or a deferred defect.
 - xee is public; `xbrlstd-rs` is not. Commit messages, code comments, tests and test data in xee carry no `xbrlstd-rs` internals or security exposure, and no `xbrlstd-rs` data, such as filings or documents produced from them. A claim about XPath or XSLT semantics rests on the specifications and the suites.
-- Carry authorized work through implementation, verification and review, and make routine internal choices yourself. Surface before implementing: a change to the public API `xbrlstd-rs` uses (the four crates under *Consumer* below), and a deliberate departure from a specification. When an `xbrlstd-rs` task needs an xee change, surface it and agree on it first: the fork change is a change of its own.
+- Carry authorized work through implementation, verification and review, and make routine internal choices yourself. Surface before implementing: a change to the public API `xbrlstd-rs` uses (the crates under *Consumer* below, `xot` among them), and a deliberate departure from a specification. When an `xbrlstd-rs` task needs an xee change, surface it and agree on it first: the fork change is a change of its own.
 - Integrating onto `main` and pushing are approved per change, never carried over (*Delivery*).
 
 ## Specification work
@@ -155,7 +156,9 @@ Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream
 
 **Trunk.** `main` is the trunk and the only branch that is pushed; there is a single developer, so there are no pushed topic branches or GitHub PRs. How a change gets there is *Delivery* above.
 
-**Consumer.** `xbrlstd-rs` depends on this fork by git SHA (`xee-xpath`, `xee-interpreter`, `xee-xpath-macros`, `xee-xpath-ast` in `../xbrlstd-rs/Cargo.toml`, all pinned to the same `rev`). To ship a change, push `main` and bump that `rev` in `xbrlstd-rs`. **Never rewrite pushed history.** A pinned SHA that becomes unreachable breaks `xbrlstd-rs` builds.
+**Consumer.** `xbrlstd-rs` depends on this fork by git SHA (`xee-xpath`, `xee-interpreter`, `xee-xpath-macros`, `xee-xpath-ast` and, from the `rev` bump that takes `xot/`, `xot`, in `../xbrlstd-rs/Cargo.toml`, all pinned to the same `rev`). To ship a change, push `main` and bump that `rev` in `xbrlstd-rs`. **Never rewrite pushed history.** A pinned SHA that becomes unreachable breaks `xbrlstd-rs` builds.
+
+**xot.** `xot/`, the XML tree library, is a workspace member like the others, under this repository's toolchain, audit and *Delivery*. The gate's test step builds it with the features the other members ask for (`proptest`, `serde`), and its clippy step with all of them, so its `icu` tests (three, and a doctest) run only under `cargo test -p xot --all-features`: run that too for a change in `xot/`. The commit "Import xot into the repository, without its history" added it as `Wietse/xot`'s `3cab3560` (upstream `faassen/xot`'s 0.31.2 release plus two lint fixes), tree for tree; the history before it is in `Wietse/xot`, archived read-only. As with xee, upstream is not tracked. A commit from upstream or from `Wietse/xot`'s branches is ported with `git format-patch` there and `git am -3 --directory=xot/ --exclude=xot/Cargo.lock --exclude=xot/CHANGES.md` here. A port that changes xot's dependencies inherits the shared ones from the workspace and updates the root `Cargo.lock`, the only lockfile, which makes it a lockfile step (*Verification*). `xot/CHANGES.md` (upstream's through 0.31.2, plus `Wietse/xot`'s entry for its lint fixes) and `xot/release.toml` are not maintained here; changes made here are recorded in git, as xee's are.
 
 **What the fork adds on top of upstream** (details in `git log 200b1e33..`):
 
@@ -173,12 +176,12 @@ Since 2026-09-24 this fork no longer tracks upstream (`Paligo/xee`): no upstream
 
 **Legacy branches.** The old upstream-oriented branch stack was merged into `main` and deleted on 2026-09-24. The one exception is the remote `macro-hardening` branch, which stays because it is the source branch of the still-open upstream PR [Paligo/xee#151](https://github.com/Paligo/xee/pull/151); deleting it would close that PR. Its commits are already in `main`.
 
-**License.** MIT. Keep `LICENSE-MIT` and `COPYRIGHT` intact.
+**License.** MIT. Keep `LICENSE-MIT` and `COPYRIGHT` intact, and `xot/LICENSE.txt`, xot's own MIT notice.
 
 ## CI and tooling
 
 - **Toolchain:** `rust-toolchain.toml` pins the one Rust version; rustup picks it up locally, and CI installs it with `rustup toolchain install --no-self-update`. It moves together with `xbrlstd-rs`'s pin, never ahead of it, because xee is compiled there with that toolchain.
-- **Workspace:** `[workspace.package]` holds the edition and shared metadata, and sets `publish = false`. `[workspace.dependencies]` declares every shared dependency, including the internal crates. Members inherit with `{ workspace = true }`, so an upgrade moves one line.
+- **Workspace:** `[workspace.package]` holds the edition and shared metadata, and sets `publish = false`. `[workspace.dependencies]` declares every shared dependency, including the internal crates. Members inherit with `{ workspace = true }`, so an upgrade moves one line. `xot` inherits the edition, `publish` and its shared dependencies, and keeps upstream's `authors`, `license` and links.
 - **Gate:** `.github/workflows/ci.yml` runs on pushes to `main`, on PRs, and by hand (`workflow_dispatch`): fmt, clippy `-D warnings`, build, test, and the XPath and XSLT conformance `check`s, both in debug mode. `./check` runs the same tests and both suites locally. `.githooks/pre-commit` runs the same gate on each `git commit` that changes code; change the two together. Activate the hook per clone with `git config core.hooksPath .githooks`.
 - **Fuzzing:** `fuzz/` is its own cargo workspace (outside the gate, so stable never builds libfuzzer) with `xee-json` targets `robustness` and `differential` (against serde_json). Run from the root: `cargo +nightly fuzz run <target> fuzz/corpus/<target> vendor/xpath-tests/misc/JSONTestSuite/test_parsing -- -max_total_time=300 -max_len=4096` (the writable corpus first, so `vendor/` is never written). Its replay tests, fmt and clippy run on stable with `--manifest-path fuzz/Cargo.toml`.
 - **Advisories:** `.github/workflows/audit.yml` runs `cargo audit` daily and on lockfile changes. It sits beside the gate, not in it.

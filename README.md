@@ -191,10 +191,11 @@ The Xee project is composed of many crates. Here is a quick overview:
 - [`xee-xpath-load`](xee-xpath-load) - Infastructure to help defining loaders
   for XML data used by `xee-testrunner`.
 
-Some affiliated projects exist as well maintained outside of this project:
+- [`xot`](xot) - XML tree library implementation. Contains logic for
+  traversal, manipulation, parsing and serialization. Imported from a fork of
+  [`faassen/xot`](https://github.com/faassen/xot) 0.31.2.
 
-- [`xot`](https://github.com/faassen/xot) - XML tree library implementation.
-  Contains logic for traversal, manipulation, parsing and serialization.
+Some affiliated projects exist as well maintained outside of this project:
 
 - [`regexml`](https://github.com/Paligo/regexml) - XML Schema and XPath
   compatible regex engine.

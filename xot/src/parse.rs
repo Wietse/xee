@@ -676,9 +676,11 @@ impl Xot {
                         value,
                         span: _,
                     } => {
+                        // `xmlns:p` declares a prefix and `xmlns` the default
+                        // namespace; `a:xmlns` is an attribute like any other
                         if prefix.as_str() == "xmlns" {
                             builder.prefix(local.as_str(), value.as_str(), self);
-                        } else if local.as_str() == "xmlns" {
+                        } else if prefix.is_empty() && local.as_str() == "xmlns" {
                             builder.prefix("", value.as_str(), self);
                         } else {
                             builder.attribute(prefix, local, value)?;

@@ -477,3 +477,78 @@ fn test_parse_fragment_with_span_info() {
         &Span::new(4, 5)
     );
 }
+
+// only `xmlns` and `xmlns:p` are declarations (Namespaces in XML 1.0,
+// section 3: NSAttName ::= PrefixedAttName | DefaultAttName, DefaultAttName
+// ::= 'xmlns'); `a:xmlns` is an attribute in `a`'s namespace
+#[test]
+fn test_prefixed_attribute_named_xmlns() {
+    let mut xot = Xot::new();
+    let root = xot
+        .parse(r#"<p xmlns:a="urn:a" a:xmlns="urn:x"><q/></p>"#)
+        .unwrap();
+    let p = xot.document_element(root).unwrap();
+    let q = xot.first_child(p).unwrap();
+    assert_eq!(
+        xot.namespace_for_name(xot.node_name(p).unwrap()),
+        xot.no_namespace()
+    );
+    assert_eq!(
+        xot.namespace_for_name(xot.node_name(q).unwrap()),
+        xot.no_namespace()
+    );
+    let urn_a = xot.namespace("urn:a").unwrap();
+    let a_xmlns = xot.name_ns("xmlns", urn_a).unwrap();
+    assert_eq!(xot.get_attribute(p, a_xmlns), Some("urn:x"));
+    assert_eq!(
+        xot.to_string(root).unwrap(),
+        r#"<p xmlns:a="urn:a" a:xmlns="urn:x"><q/></p>"#
+    );
+}
+
+// names are case-sensitive: `XMLNS` and `Xmlns` are attributes
+#[test]
+fn test_xmlns_in_another_case_is_an_attribute() {
+    let mut xot = Xot::new();
+    let root = xot.parse(r#"<p XMLNS="urn:x" Xmlns="urn:y"/>"#).unwrap();
+    let p = xot.document_element(root).unwrap();
+    assert_eq!(
+        xot.namespace_for_name(xot.node_name(p).unwrap()),
+        xot.no_namespace()
+    );
+    let upper = xot.name("XMLNS").unwrap();
+    let title = xot.name("Xmlns").unwrap();
+    assert_eq!(xot.get_attribute(p, upper), Some("urn:x"));
+    assert_eq!(xot.get_attribute(p, title), Some("urn:y"));
+}
+
+// the prefix too: `XMLNS:p` is an attribute in the namespace bound to the
+// prefix `XMLNS`, not a declaration of `p`
+#[test]
+fn test_prefixed_xmlns_in_another_case_is_an_attribute() {
+    let mut xot = Xot::new();
+    let root = xot
+        .parse(r#"<r xmlns:XMLNS="urn:u" XMLNS:p="v"/>"#)
+        .unwrap();
+    let r = xot.document_element(root).unwrap();
+    let urn_u = xot.namespace("urn:u").unwrap();
+    let p = xot.name_ns("p", urn_u).unwrap();
+    assert_eq!(xot.get_attribute(r, p), Some("v"));
+    assert!(xot
+        .prefix("p")
+        .is_none_or(|p| !xot.namespaces(r).contains_key(p)));
+}
+
+// and exactly: a prefix that merely begins with `xmlns`, reserved but
+// legal, names an attribute's namespace, not a declaration
+#[test]
+fn test_prefix_beginning_with_xmlns_is_an_attribute() {
+    let mut xot = Xot::new();
+    let root = xot
+        .parse(r#"<r xmlns:xmlnsx="urn:u" xmlnsx:p="v"/>"#)
+        .unwrap();
+    let r = xot.document_element(root).unwrap();
+    let urn_u = xot.namespace("urn:u").unwrap();
+    let p = xot.name_ns("p", urn_u).unwrap();
+    assert_eq!(xot.get_attribute(r, p), Some("v"));
+}

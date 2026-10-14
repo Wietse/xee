@@ -169,3 +169,67 @@ fn test_invalid_entity() {
     assert!(matches!(err, xot::ParseError::InvalidEntity(_, _)));
     assert_eq!(err.span(), (5..10).into());
 }
+
+// the duplicate check is a set of the qualified names seen in the start
+// tag: a repeat is found after many distinct attributes, and the same
+// local name under another prefix is not a repeat
+#[test]
+fn test_duplicate_attribute_after_many() {
+    let mut xml = String::from(r#"<doc xmlns:x="urn:x""#);
+    for i in 0..20_000 {
+        xml.push_str(&format!(r#" a{i}="v""#));
+    }
+    let tail = xml.len() + 1;
+    xml.push_str(r#" a7="w"/>"#);
+    let mut xot = Xot::new();
+    let err = xot.parse(&xml).unwrap_err();
+    match &err {
+        xot::ParseError::DuplicateAttribute(name, _) => assert_eq!(name, "a7"),
+        _ => panic!("{err:?}"),
+    }
+    assert_eq!(err.span(), (tail..tail + 2).into());
+}
+
+// what is and is not a repeat, below the scan limit and above it, where
+// `pad` puts 40 other attributes first: the same local name under another
+// prefix, a prefix and name that spell another name run together, and
+// another case are not repeats; a repeat after the limit is
+#[test]
+fn test_what_a_repeated_attribute_is() {
+    let pad: String = (0..40).map(|i| format!(r#" p{i}="v""#)).collect();
+    for pad in ["", pad.as_str()] {
+        for tail in [
+            r#" a="1" x:a="2" y:a="3""#,
+            r#" x:ab="1" xa:b="2""#,
+            r#" a="1" A="2""#,
+        ] {
+            let xml =
+                format!(r#"<doc xmlns:x="urn:x" xmlns:y="urn:y" xmlns:xa="urn:xa"{pad}{tail}/>"#);
+            let mut xot = Xot::new();
+            assert!(xot.parse(&xml).is_ok(), "{xml}");
+        }
+        let xml = format!(r#"<doc xmlns:x="urn:x"{pad} x:a="1" x:a="2"/>"#);
+        let mut xot = Xot::new();
+        let err = xot.parse(&xml).unwrap_err();
+        match &err {
+            xot::ParseError::DuplicateAttribute(name, _) => assert_eq!(name, "x:a", "{xml}"),
+            _ => panic!("{xml}: {err:?}"),
+        }
+    }
+}
+
+// a repeat of an attribute from before the switch to the set is found,
+// the first and the last before it alike
+#[test]
+fn test_duplicate_attribute_across_the_scan_limit() {
+    let attributes: String = (0..32).map(|i| format!(r#" a{i}="v""#)).collect();
+    for repeat in ["a0", "a31"] {
+        let xml = format!(r#"<doc{attributes} {repeat}="w"/>"#);
+        let mut xot = Xot::new();
+        let err = xot.parse(&xml).unwrap_err();
+        match &err {
+            xot::ParseError::DuplicateAttribute(name, _) => assert_eq!(name, repeat),
+            _ => panic!("{err:?}"),
+        }
+    }
+}

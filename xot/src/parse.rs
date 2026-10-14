@@ -12,6 +12,11 @@ use crate::NamespaceId;
 
 type Namespaces = Vec<(PrefixId, NamespaceId)>;
 
+// A start tag with fewer attributes than this is checked for a repeat by a
+// scan of the attributes before, which allocates nothing; a longer one by a
+// set of the qualified names seen, which keeps the check linear.
+const ATTRIBUTE_SCAN_LIMIT: usize = 32;
+
 struct AttributeBuilder {
     prefix: String,
     name: String,
@@ -26,6 +31,9 @@ struct ElementBuilder {
     name: String,
     namespaces: Namespaces,
     attributes: Vec<AttributeBuilder>,
+    // the qualified names seen in this start tag, made once it has
+    // `ATTRIBUTE_SCAN_LIMIT` attributes, so that a short one makes no set
+    attribute_names: Option<HashSet<(String, String)>>,
     prefix_span: Span,
     span: Span,
 }
@@ -37,6 +45,7 @@ impl ElementBuilder {
             name: name.to_string(),
             namespaces: Namespaces::new(),
             attributes: Vec::new(),
+            attribute_names: None,
             prefix_span: prefix.into(),
             span: Span::from_prefix_name(prefix, name),
         }
@@ -90,10 +99,28 @@ impl DocumentBuilder {
         name: StrSpan<'_>,
         value: StrSpan<'_>,
     ) -> Result<(), ParseError> {
-        let attributes = &mut self.element_builder.as_mut().unwrap().attributes;
-        let is_duplicate = attributes.iter().any(|attribute_builder| {
-            attribute_builder.prefix == prefix.as_str() && attribute_builder.name == name.as_str()
-        });
+        let element_builder = self.element_builder.as_mut().unwrap();
+        let is_duplicate = if element_builder.attributes.len() < ATTRIBUTE_SCAN_LIMIT {
+            element_builder.attributes.iter().any(|attribute_builder| {
+                attribute_builder.prefix == prefix.as_str()
+                    && attribute_builder.name == name.as_str()
+            })
+        } else {
+            let attributes = &element_builder.attributes;
+            let seen = element_builder.attribute_names.get_or_insert_with(|| {
+                attributes
+                    .iter()
+                    .map(|attribute_builder| {
+                        (
+                            attribute_builder.prefix.clone(),
+                            attribute_builder.name.clone(),
+                        )
+                    })
+                    .collect()
+            });
+            !seen.insert((prefix.to_string(), name.to_string()))
+        };
+        let attributes = &mut element_builder.attributes;
         if is_duplicate {
             let attr_name = if prefix.is_empty() {
                 name.to_string()

@@ -4,7 +4,7 @@ version = "0.0.0"
 publish = false
 edition = "2021"
 license = "MIT"
-description = "Fuzz targets for the xee-json tokenizer (run with cargo +nightly fuzz)"
+description = "Fuzz targets for the xee-json tokenizer and the xee-regex parser (run with cargo +nightly fuzz)"
 
 [package.metadata]
 cargo-fuzz = true
@@ -16,6 +16,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 xee-json = { path = "../xee-json" }
+xee-regex = { path = "../xee-regex" }
 serde = "1"
 # arbitrary_precision: numbers keep their text, so the differential compares
 # number text rather than f64 values. It also makes Value read an object
@@ -35,6 +36,13 @@ bench = false
 [[bin]]
 name = "differential"
 path = "fuzz_targets/differential.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "regex_parse"
+path = "fuzz_targets/regex_parse.rs"
 test = false
 doc = false
 bench = false

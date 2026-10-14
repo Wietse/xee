@@ -212,7 +212,12 @@ dependencies = [
  "serde",
  "serde_json",
  "xee-json",
+ "xee-regex",
 ]
+
+[[package]]
+name = "xee-regex"
+version = "0.1.0"
 
 [[package]]
 name = "zmij"

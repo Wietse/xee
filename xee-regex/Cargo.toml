@@ -1,0 +1,15 @@
+[package]
+name = "xee-regex"
+version = "0.1.0"
+description = "XPath 3.1 regular expressions: F&O 3.1 §5.6 over the XSD 1.1 grammar"
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+# The crate is MIT; its Unicode tables are generated from the Unicode
+# Character Database, under the Unicode License v3 (LICENSE-UNICODE).
+license = "MIT AND Unicode-3.0"
+repository.workspace = true
+homepage.workspace = true
+
+[dev-dependencies]
+xot = { workspace = true }

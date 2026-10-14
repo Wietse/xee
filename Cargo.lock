@@ -3119,6 +3119,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "xee-regex"
+version = "0.1.0"
+dependencies = [
+ "xot",
+]
+
+[[package]]
 name = "xee-schema-type"
 version = "0.1.4"
 dependencies = [

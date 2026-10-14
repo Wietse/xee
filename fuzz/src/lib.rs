@@ -21,6 +21,9 @@
 //!   re-runs an accepted text one level below its own depth
 //!   ([`try_lower_depth`]).
 //!
+//! The third target, `regex_parse`, compiles regular expressions with
+//! `xee-regex` ([`regex`]).
+//!
 //! Every drain of the tokenizer goes through the bounded helpers of
 //! `xee-json/tests/common` (at most `input.len() + 1` items, the bound
 //! asserted), so a tokenizer that stops being fused fails a check instead of
@@ -34,6 +37,8 @@ use xee_json::{BomPolicy, Error, ErrorKind, Event, Options, Str, DEFAULT_MAX_DEP
 
 #[path = "../../xee-json/tests/common/mod.rs"]
 mod common;
+
+pub mod regex;
 
 /// One item of a tokenizer drain.
 pub type Item<'a> = Result<Event<'a>, Error>;

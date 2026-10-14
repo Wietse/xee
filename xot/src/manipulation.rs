@@ -1,3 +1,5 @@
+use ahash::{HashMap, HashMapExt};
+
 use crate::unpretty::remove_insignificant_whitespace;
 use crate::xotdata::{Node, Xot};
 use crate::{xmlname, MutableAttributes, MutableNamespaces, NamespaceId, PrefixId};
@@ -669,8 +671,40 @@ impl Xot {
     /// # Ok::<(), xot::Error>(())
     /// ```
     pub fn clone_with_prefixes(&mut self, node: Node) -> Node {
-        // get all prefixes defined in scope
-        let prefixes = self.inherited_prefixes(node);
+        // the prefixes in scope that the node or its descendants need: the
+        // set `inherited_prefixes` gives, in a fixed order, not the hash
+        // map's: the base prefixes, then the ancestors' declarations,
+        // farthest first, each ancestor's in its own order, a prefix that a
+        // nearer ancestor declares again moving to that place. The
+        // serializer writes a name with the last prefix declared for its
+        // namespace, and a redeclaration counts as the latest
+        // (`FullnameInfo`), so this order makes it pick the prefix a
+        // serialization of the whole document picks.
+        let required = self.inherited_prefixes(node);
+        let mut ordered: Vec<Option<(PrefixId, NamespaceId)>> = Vec::new();
+        let mut position: HashMap<PrefixId, usize> = HashMap::new();
+        let mut place = |entry: (PrefixId, NamespaceId)| {
+            if let Some(earlier) = position.insert(entry.0, ordered.len()) {
+                ordered[earlier] = None;
+            }
+            ordered.push(Some(entry));
+        };
+        for (prefix, namespace) in self.base_prefixes() {
+            if required.get(&prefix) == Some(&namespace) {
+                place((prefix, namespace));
+            }
+        }
+        if let Some(parent) = self.parent(node) {
+            let ancestors: Vec<Node> = self.ancestors(parent).collect();
+            for ancestor in ancestors.into_iter().rev() {
+                for (prefix, namespace) in self.namespaces(ancestor).iter() {
+                    if required.get(&prefix) == Some(namespace) {
+                        place((prefix, *namespace));
+                    }
+                }
+            }
+        }
+        let prefixes: Vec<(PrefixId, NamespaceId)> = ordered.into_iter().flatten().collect();
 
         let clone = self.clone_node(node);
         // add any prefixes from outer scope we may need

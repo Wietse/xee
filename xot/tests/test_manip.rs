@@ -602,6 +602,89 @@ fn test_clone_with_prefixes_only_necessary_ones() {
     );
 }
 
+// the inherited declarations a clone needs come farthest ancestor first,
+// each ancestor's in its own order; six of them, so that a hash map's
+// order matches it by chance once in 720
+#[test]
+fn test_clone_with_prefixes_in_declaration_order() {
+    let mut xot = Xot::new();
+    let root = xot
+        .parse(concat!(
+            r#"<r xmlns:f="urn:f" xmlns:b="urn:b">"#,
+            r#"<m xmlns:e="urn:e" xmlns:a="urn:a" xmlns:d="urn:d" xmlns:c="urn:c">"#,
+            r#"<f:x b:y="1"><e:z a:w="2"/><d:v c:u="3"/></f:x></m></r>"#
+        ))
+        .unwrap();
+    let r = xot.document_element(root).unwrap();
+    let m = xot.first_child(r).unwrap();
+    let x = xot.first_child(m).unwrap();
+    let clone = xot.clone_with_prefixes(x);
+    assert_eq!(
+        xot.to_string(clone).unwrap(),
+        concat!(
+            r#"<f:x xmlns:f="urn:f" xmlns:b="urn:b" xmlns:e="urn:e" xmlns:a="urn:a""#,
+            r#" xmlns:d="urn:d" xmlns:c="urn:c" b:y="1"><e:z a:w="2"/><d:v c:u="3"/></f:x>"#
+        )
+    );
+}
+
+// one namespace with a prefix on each of two ancestors: the clone's name
+// takes the nearer one's, as a serialization of the whole document does
+#[test]
+fn test_clone_with_prefixes_takes_the_nearer_prefix() {
+    let mut xot = Xot::new();
+    let root = xot
+        .parse(r#"<r xmlns:a="urn:x"><m xmlns:b="urn:x"><b:x b:p="1"/></m></r>"#)
+        .unwrap();
+    let r = xot.document_element(root).unwrap();
+    let m = xot.first_child(r).unwrap();
+    let x = xot.first_child(m).unwrap();
+    assert_eq!(
+        xot.to_string(root).unwrap(),
+        r#"<r xmlns:a="urn:x"><m xmlns:b="urn:x"><b:x b:p="1"/></m></r>"#
+    );
+    let clone = xot.clone_with_prefixes(x);
+    assert_eq!(
+        xot.to_string(clone).unwrap(),
+        r#"<b:x xmlns:a="urn:x" xmlns:b="urn:x" b:p="1"/>"#
+    );
+}
+
+// a prefix a nearer ancestor declares again takes the nearer place, so
+// the clone's name takes the prefix the whole document gives it; and a
+// prefix a nearer ancestor binds to another namespace is that binding
+#[test]
+fn test_clone_with_prefixes_redeclared_nearer() {
+    for (xml, clone) in [
+        (
+            r#"<A xmlns:a="urn:x"><B xmlns:b="urn:x"><C xmlns:a="urn:x"><a:x a:p="1"/></C></B></A>"#,
+            r#"<a:x xmlns:b="urn:x" xmlns:a="urn:x" a:p="1"/>"#,
+        ),
+        (
+            r#"<A xmlns:a="urn:x" xmlns:b="urn:x"><B xmlns:a="urn:x"><C><a:x/></C></B></A>"#,
+            r#"<a:x xmlns:b="urn:x" xmlns:a="urn:x"/>"#,
+        ),
+        (
+            r#"<A xmlns:a="urn:x"><B xmlns:b="urn:x"><C xmlns:a="urn:y"><b:x a:p="1"/></C></B></A>"#,
+            r#"<b:x xmlns:b="urn:x" xmlns:a="urn:y" a:p="1"/>"#,
+        ),
+        (
+            r#"<A xmlns:a="urn:x"><B xmlns:a="urn:x"><C xmlns:b="urn:x"><D xmlns:a="urn:x"><a:x/></D></C></B></A>"#,
+            r#"<a:x xmlns:b="urn:x" xmlns:a="urn:x"/>"#,
+        ),
+    ] {
+        let mut xot = Xot::new();
+        let root = xot.parse(xml).unwrap();
+        assert_eq!(xot.to_string(root).unwrap(), xml);
+        let mut node = xot.document_element(root).unwrap();
+        while let Some(child) = xot.first_child(node) {
+            node = child;
+        }
+        let cloned = xot.clone_with_prefixes(node);
+        assert_eq!(xot.to_string(cloned).unwrap(), clone, "{xml}");
+    }
+}
+
 #[test]
 fn test_clone_with_prefixes_non_element() {
     let mut xot = Xot::new();

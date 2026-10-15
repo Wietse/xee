@@ -4,7 +4,7 @@ version = "0.0.0"
 publish = false
 edition = "2021"
 license = "MIT"
-description = "Fuzz targets for the xee-json tokenizer and the xee-regex parser (run with cargo +nightly fuzz)"
+description = "Fuzz targets for the xee-json tokenizer and the xee-regex parser and matchers (run with cargo +nightly fuzz)"
 
 [package.metadata]
 cargo-fuzz = true
@@ -43,6 +43,13 @@ bench = false
 [[bin]]
 name = "regex_parse"
 path = "fuzz_targets/regex_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "regex_match"
+path = "fuzz_targets/regex_match.rs"
 test = false
 doc = false
 bench = false

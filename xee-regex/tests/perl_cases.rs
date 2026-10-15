@@ -1,12 +1,10 @@
 //! QT3's Perl-derived regular-expression cases (`fn-matches-50`, in
-//! `vendor/xpath-tests/fn/matches/perl-tests.xml`), as far as compiling
-//! a pattern decides them. The suite's composite test expects `fn:matches`
-//! to answer a case whose result is `y` or `n`, and to raise an error for
-//! any other; `matches` raises no error once its pattern and flags are
-//! accepted, so a case of the first kind must compile and one of the
-//! second must not.
+//! `vendor/xpath-tests/fn/matches/perl-tests.xml`). The suite's composite
+//! test expects `fn:matches` to answer `true` for a case whose result is
+//! `y`, `false` for one whose result is `n`, and to raise an error for any
+//! other.
 
-use xee_regex::Regex;
+use xee_regex::{Budget, Regex};
 use xot::Xot;
 
 /// Cases the composite test expects to fail under XSD 1.1, whose grammar
@@ -14,7 +12,7 @@ use xot::Xot;
 const XSD_1_0_CASES: [&str; 4] = ["p888", "p889", "p890", "p891"];
 
 #[test]
-fn the_perl_cases_compile_as_the_suite_expects() {
+fn the_perl_cases_answer_as_the_suite_expects() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../vendor/xpath-tests/fn/matches/perl-tests.xml"
@@ -22,8 +20,8 @@ fn the_perl_cases_compile_as_the_suite_expects() {
     let text = std::fs::read_to_string(path).unwrap();
     let mut xot = Xot::new();
     let root = xot.parse(&text).unwrap();
-    let [test, id, regex, flags, result] =
-        ["test", "id", "regex", "flags", "result"].map(|n| xot.add_name(n));
+    let [test, id, regex, flags, input, result] =
+        ["test", "id", "regex", "flags", "input", "result"].map(|n| xot.add_name(n));
     let mut cases = 0;
     let mut wrong = Vec::new();
     for node in xot.descendants(root) {
@@ -32,16 +30,22 @@ fn the_perl_cases_compile_as_the_suite_expects() {
         }
         cases += 1;
         let attr = |name| xot.get_attribute(node, name).unwrap_or("");
-        let answers = matches!(attr(result), "y" | "n");
-        let compiled = Regex::new(attr(regex), attr(flags));
-        if answers != compiled.is_ok() && !XSD_1_0_CASES.contains(&attr(id)) {
+        let expected = match attr(result) {
+            "y" => Some(true),
+            "n" => Some(false),
+            _ => None,
+        };
+        let got = Regex::new(attr(regex), attr(flags))
+            .and_then(|r| r.is_match(attr(input), &mut Budget::new(50_000_000)));
+        if expected != got.clone().ok() && !XSD_1_0_CASES.contains(&attr(id)) {
             wrong.push(format!(
-                "{}: {:?} flags {:?} expects {:?}, got {:?}",
+                "{}: {:?} flags {:?} on {:?} expects {:?}, got {:?}",
                 attr(id),
                 attr(regex),
                 attr(flags),
+                attr(input),
                 attr(result),
-                compiled.map(|_| ())
+                got
             ));
         }
     }

@@ -2,7 +2,7 @@
 //! under every combination of flags: the shapes the parser's ceilings
 //! exist for, and the grammar's corners.
 
-use xee_json_fuzz::regex::{flags_from_selector, regex_parse};
+use xee_json_fuzz::regex::{flags_from_selector, regex_match, regex_parse};
 
 #[test]
 fn the_selector_covers_every_flag() {
@@ -43,4 +43,26 @@ fn regex_parse_seeds() {
     // Not UTF-8, and empty: skipped.
     regex_parse(&[0, 0xFF, 0xFE]);
     regex_parse(&[]);
+}
+
+#[test]
+fn regex_match_seeds() {
+    // The shapes that shaped the PikeVM's closure, under every flag.
+    let seeds: [(&str, &str); 6] = [
+        ("(\\s*|)*a.{0,2}", "B aaaa"),
+        ("((a?)*)*", "aab"),
+        ("(?:(?:(?:(?:(a?)*)*)*)*)*", "aaa"),
+        ("(^|a)*b", "b\nab"),
+        ("(?:x(a)?)+", "xax"),
+        ("(a|b)*c", "ababxc"),
+    ];
+    for (pattern, hay) in seeds {
+        for selector in 0..32u8 {
+            let mut data = vec![selector];
+            data.extend_from_slice(pattern.as_bytes());
+            data.push(0);
+            data.extend_from_slice(hay.as_bytes());
+            regex_match(&data);
+        }
+    }
 }

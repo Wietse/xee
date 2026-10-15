@@ -8,17 +8,32 @@
 //! bounded: the pattern's length, its nesting, the nodes and character sets
 //! it builds and the program's size each have a ceiling, past which the
 //! pattern is refused with [`Error::Limit`].
+//!
+//! The operations of F&O 3.1 §5.6.3 to §5.6.6 run the program on a
+//! PikeVM, each search linear in the input, or, when it has
+//! back-references, on a backtracking matcher; the two give the same
+//! answers. Each takes a [`Budget`] of steps, which every
+//! search the call makes and everything it builds from a match are charged
+//! to before they are done; a call that would spend more is refused with
+//! [`Error::Limit`], as is one that would hold more memory than a ceiling
+//! of its own allows.
 
+mod backtrack;
 mod charset;
 mod compile;
+mod ops;
 mod parse;
+mod pike;
+mod prefilter;
 #[rustfmt::skip]
 mod tables;
 mod unicode;
 
 use std::fmt;
 
+use backtrack::Slots;
 use compile::Program;
+pub use ops::{AnalyzeEntry, MatchEntry};
 
 /// The version of Unicode the character data comes from: categories,
 /// blocks and case variants.
@@ -36,15 +51,22 @@ const _: () = assert!(
     "xee-regex's Unicode tables are for another Unicode version than the toolchain's: regenerate src/tables.rs"
 );
 
-/// Why a pattern or its flags are refused.
+/// Why a pattern, its flags or a call are refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
     /// FORX0001: the flags are not a string of `s`, `m`, `i`, `x` and `q`.
     InvalidFlags(String),
     /// FORX0002: the pattern is not a valid regular expression.
     Syntax(String),
+    /// FORX0003: `fn:replace`, `fn:tokenize` or `fn:analyze-string` with a
+    /// pattern that matches the empty string.
+    MatchesEmptyString,
+    /// FORX0004: a replacement string with a `$` not followed by a digit,
+    /// or a `\` not followed by `\` or `$`; it says which, and where.
+    InvalidReplacement(String),
     /// An implementation limit: the pattern is too long, nests too deeply,
-    /// or builds too many nodes, character sets or instructions.
+    /// or builds too many nodes, character sets or instructions; or a call
+    /// spends its budget or would hold more memory than a ceiling allows.
     Limit(String),
 }
 
@@ -53,12 +75,148 @@ impl fmt::Display for Error {
         match self {
             Error::InvalidFlags(flags) => write!(f, "invalid regular expression flags {flags:?}"),
             Error::Syntax(msg) => write!(f, "invalid regular expression: {msg}"),
+            Error::MatchesEmptyString => {
+                write!(f, "the regular expression matches the empty string")
+            }
+            Error::InvalidReplacement(why) => write!(f, "invalid replacement string: {why}"),
             Error::Limit(msg) => write!(f, "regular expression refused: {msg}"),
         }
     }
 }
 
 impl std::error::Error for Error {}
+
+/// Ceiling: the bytes one call holds for what it builds, counted as they
+/// are reserved, before they are allocated, at what the allocator takes
+/// for them ([`chunk`]): its result, the parsed replacement string, and
+/// the matcher's stack and scratch memory. A match's slots and the group
+/// tree's list of groups are freed with the match and as large as the
+/// pattern's groups, and are not counted. Steps bound time, not memory: a
+/// result's item or a stack frame costs a step and tens of bytes. 2^27
+/// bytes are 128 MiB.
+///
+/// It bounds the chunks a call holds, not the process's resident memory:
+/// glibc sometimes hands over sixteen bytes more than [`chunk`] counts
+/// (a call measured at 1.016 times the ceiling), and once a process has
+/// freed a large block, it raises the size from which it maps a block
+/// apart, so a growing result can leave its last heap buffer resident:
+/// up to that size, 32 MiB at most (a warm process measured at 1.19
+/// times).
+pub(crate) const MAX_CALL_BYTES: usize = 1 << 27;
+
+/// What an allocation of `bytes` takes from the allocator: glibc's malloc
+/// adds an eight-byte header, rounds up to sixteen, and gives no chunk
+/// under 32 bytes, so a one-byte string takes 32. Other allocators round
+/// differently, by as much.
+pub(crate) fn chunk(bytes: usize) -> usize {
+    if bytes == 0 {
+        0
+    } else {
+        (bytes.saturating_add(8 + 15) / 16 * 16).max(32)
+    }
+}
+
+/// The steps one call may take. A step is an instruction a matcher visits,
+/// or a position the PikeVM's search reaches; each of these costs one
+/// more: setting up, saving or clearing a capture slot or a progress
+/// register (the PikeVM copies or clears a row of slots at a step per
+/// eight), a byte of the text a back-reference compares, a byte of the
+/// replacement string, and a byte of a result and a part of it built for
+/// each match; a character class costs one more for each doubling of its
+/// ranges, which its test searches. Work is charged before it is done.
+///
+/// The caller decides what a budget covers; F&O's operations each take
+/// one, so one call cannot spend another's. The memory a call holds has a
+/// ceiling of its own, per call whatever its budget; what the calls return
+/// is the caller's to bound across them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Budget {
+    limit: u64,
+    left: u64,
+    /// The bytes the current call holds, and may hold.
+    held: usize,
+    memory: usize,
+}
+
+impl Budget {
+    pub fn new(steps: u64) -> Budget {
+        Budget::with_memory(steps, MAX_CALL_BYTES)
+    }
+
+    /// A budget whose calls may hold at most `bytes`, for tests of the
+    /// ceiling at sizes a test can reach.
+    #[doc(hidden)]
+    pub fn with_memory(steps: u64, bytes: usize) -> Budget {
+        Budget {
+            limit: steps,
+            left: steps,
+            held: 0,
+            memory: bytes,
+        }
+    }
+
+    /// The steps spent so far; all of them once the call was refused at a
+    /// charge.
+    pub fn spent(&self) -> u64 {
+        self.limit - self.left
+    }
+
+    pub(crate) fn charge(&mut self, steps: u64) -> Result<(), Error> {
+        if self.left < steps {
+            self.left = 0;
+            return Err(Error::Limit(format!(
+                "the call would take more than its budget of {} steps",
+                self.limit
+            )));
+        }
+        self.left -= steps;
+        Ok(())
+    }
+
+    /// Reserves `bytes` more of the call's memory.
+    pub(crate) fn hold(&mut self, bytes: usize) -> Result<(), Error> {
+        match self.held.checked_add(bytes) {
+            Some(held) if held <= self.memory => {
+                self.held = held;
+                Ok(())
+            }
+            _ => Err(Error::Limit(format!(
+                "the call would hold more than {} bytes of memory",
+                self.memory
+            ))),
+        }
+    }
+}
+
+/// Makes room for `more` items in `v`, at least doubling its capacity as
+/// `Vec` does, with the bytes the growth takes held first.
+pub(crate) fn reserve<T>(v: &mut Vec<T>, more: usize, budget: &mut Budget) -> Result<(), Error> {
+    let need = v.len().saturating_add(more);
+    if need > v.capacity() {
+        let cap = need.max(v.capacity().saturating_mul(2));
+        let size = size_of::<T>();
+        budget.hold(chunk(cap.saturating_mul(size)) - chunk(v.capacity() * size))?;
+        v.reserve_exact(cap - v.len());
+    }
+    Ok(())
+}
+
+/// [`reserve`] for the bytes of a string.
+pub(crate) fn reserve_str(s: &mut String, more: usize, budget: &mut Budget) -> Result<(), Error> {
+    let need = s.len().saturating_add(more);
+    if need > s.capacity() {
+        let cap = need.max(s.capacity().saturating_mul(2));
+        budget.hold(chunk(cap) - chunk(s.capacity()))?;
+        s.reserve_exact(cap - s.len());
+    }
+    Ok(())
+}
+
+/// A copy of `text`, its allocation held first.
+pub(crate) fn copy(text: &str, budget: &mut Budget) -> Result<String, Error> {
+    budget.hold(chunk(text.len()))?;
+    Ok(text.to_string())
+}
 
 /// F&O 3.1 §5.6.2's flags.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -96,12 +254,11 @@ impl Flags {
 /// A compiled XPath regular expression.
 #[derive(Debug)]
 pub struct Regex {
-    #[expect(
-        dead_code,
-        reason = "read by the matchers, which come in a later change"
-    )]
     flags: Flags,
     group_count: usize,
+    /// `group_parent[n]` is the capturing group that most closely encloses
+    /// group `n`, or 0.
+    group_parent: Vec<usize>,
     /// The length in characters of the shortest string the pattern
     /// matches: an input shorter than it does not match, whether or not
     /// the program was compiled.
@@ -109,6 +266,50 @@ pub struct Regex {
     /// `None` when the program is over a ceiling: such a pattern can only
     /// answer that an input too short for it does not match.
     program: Option<Program>,
+    matcher: Matcher,
+    /// What a search rules out before a matcher runs.
+    prefilter: prefilter::Prefilter,
+    prefilter_on: bool,
+}
+
+/// Which matcher runs a program without back-references.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Matcher {
+    /// The PikeVM; a program with back-references runs on the backtracker.
+    Pike,
+    /// The backtracker, for tests that compare the two.
+    Backtrack,
+}
+
+/// What a call needs from each match: whether there is one, its bounds,
+/// or every group's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Need {
+    Exists,
+    Bounds,
+    Groups,
+}
+
+/// One call's budget and the matchers' scratch memory.
+struct Call<'b> {
+    budget: &'b mut Budget,
+    need: Need,
+    backtrack: Option<backtrack::Cache>,
+    pike: Option<pike::Cache>,
+}
+
+impl<'b> Call<'b> {
+    /// A call starts holding no memory, whatever its budget held before.
+    fn new(budget: &'b mut Budget, need: Need) -> Call<'b> {
+        budget.held = 0;
+        Call {
+            budget,
+            need,
+            backtrack: None,
+            pike: None,
+        }
+    }
 }
 
 impl Regex {
@@ -123,13 +324,33 @@ impl Regex {
         let flags = Flags::parse(flags)?;
         let mut parsed = parse::parse(pattern, &flags)?;
         let analysis = compile::analyse(&parsed.node);
+        // Read off the tree before compiling moves its character sets out.
+        let prefilter = prefilter::analyse(&parsed.node);
         let program = compile::compile(&mut parsed.node, parsed.group_count, &analysis).ok();
         Ok(Regex {
             flags,
             group_count: parsed.group_count,
+            group_parent: parsed.group_parent,
             min_len: analysis.min_len,
             program,
+            matcher: Matcher::Pike,
+            prefilter,
+            prefilter_on: true,
         })
+    }
+
+    /// Runs programs without back-references on `matcher`, for tests
+    /// that compare the two.
+    #[doc(hidden)]
+    pub fn set_matcher(&mut self, matcher: Matcher) {
+        self.matcher = matcher;
+    }
+
+    /// Turns the prefilter off, for tests that compare the answers with
+    /// it and without it.
+    #[doc(hidden)]
+    pub fn set_prefilter(&mut self, on: bool) {
+        self.prefilter_on = on;
     }
 
     /// The number of capturing groups.
@@ -153,6 +374,99 @@ impl Regex {
     #[doc(hidden)]
     pub fn program_listing(&self) -> Option<String> {
         self.program.as_ref().map(|p| p.to_string())
+    }
+
+    /// The leftmost match starting at or after byte offset `start`, which
+    /// is on a character boundary.
+    fn find(&self, call: &mut Call, hay: &str, start: usize) -> Result<Option<Slots>, Error> {
+        // A character is at least one byte: a bound no search pays for.
+        if self.min_len > (hay.len() - start) as u64 {
+            return Ok(None);
+        }
+        let Some(prog) = &self.program else {
+            // Counting the characters left reads their bytes.
+            call.budget.charge((hay.len() - start) as u64)?;
+            if self.min_len > hay[start..].chars().count() as u64 {
+                return Ok(None);
+            }
+            return Err(Error::Limit(
+                "the pattern's program is over a ceiling, and the input is long enough for it"
+                    .into(),
+            ));
+        };
+        // A text without a character of the required set has no match. The
+        // scan stops at the first; a match holds one and so ends past it,
+        // and the next search starts there: a call reads each byte once,
+        // and is charged at most twice what it reads.
+        if let (true, Some(set)) = (self.prefilter_on, &self.prefilter.required) {
+            if prefilter::find_any(hay, start, set, call.budget)?.is_none() {
+                return Ok(None);
+            }
+        }
+        let prefix = if self.prefilter_on {
+            self.prefilter.prefix.as_str()
+        } else {
+            ""
+        };
+        if prog.has_backrefs || self.matcher == Matcher::Backtrack {
+            let cache = match &mut call.backtrack {
+                Some(cache) => cache,
+                None => call
+                    .backtrack
+                    .insert(backtrack::Cache::new(prog, call.budget)?),
+            };
+            return backtrack::search(prog, hay, start, prefix, &self.flags, call.budget, cache);
+        }
+        let width = match call.need {
+            Need::Exists => 0,
+            Need::Bounds => 2,
+            Need::Groups => prog.slots,
+        };
+        let cache = match &mut call.pike {
+            Some(cache) => cache,
+            None => call
+                .pike
+                .insert(pike::Cache::new(prog, width, call.budget)?),
+        };
+        if !pike::search(prog, hay, start, prefix, &self.flags, call.budget, cache)? {
+            return Ok(None);
+        }
+        // The slots the call tracked, the others unset.
+        call.budget.charge(prog.slots as u64)?;
+        let mut slots: Slots = vec![None; prog.slots];
+        for (slot, &at) in slots.iter_mut().zip(cache.found()) {
+            *slot = (at != pike::NONE).then_some(at);
+        }
+        Ok(Some(slots))
+    }
+
+    /// The slots of each successive match, for tests that compare the
+    /// matchers.
+    #[doc(hidden)]
+    pub fn match_slots(
+        &self,
+        hay: &str,
+        budget: &mut Budget,
+    ) -> Result<Vec<Vec<Option<usize>>>, Error> {
+        let mut call = Call::new(budget, Need::Groups);
+        let mut out = Vec::new();
+        self.for_each_match(&mut call, hay, |slots, budget| {
+            budget.charge(slots.len() as u64)?;
+            reserve(&mut out, 1, budget)?;
+            budget.hold(chunk(slots.len() * size_of::<Option<usize>>()))?;
+            out.push(slots.clone());
+            Ok(())
+        })?;
+        Ok(out)
+    }
+
+    /// Whether the pattern matches the empty string (FORX0003), which needs
+    /// no search: on the empty input only a character class can fail, since
+    /// `^` and `$` hold there in every mode and a back-reference compares
+    /// an empty capture, so the pattern matches it exactly when some path
+    /// through it meets no class, when its minimum length is zero.
+    fn matches_empty(&self) -> bool {
+        self.min_len == 0
     }
 }
 

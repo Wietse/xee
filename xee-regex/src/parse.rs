@@ -61,13 +61,6 @@ pub(crate) struct Parsed {
     pub(crate) group_count: usize,
     /// `group_parent[n]` is the capturing group that most closely encloses
     /// group `n`, or 0; index 0 is unused.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "read by fn:analyze-string, which comes in a later change"
-        )
-    )]
     pub(crate) group_parent: Vec<usize>,
 }
 

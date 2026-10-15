@@ -100,13 +100,6 @@ impl CharSet {
         self.intersect(&other.negate())
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "used by the matchers, which come in a later change"
-        )
-    )]
     pub(crate) fn contains(&self, c: u32) -> bool {
         self.ranges
             .binary_search_by(|&(a, b)| {

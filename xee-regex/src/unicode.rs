@@ -115,6 +115,14 @@ fn name_char() -> CharSet {
     ]))
 }
 
+/// Whether `b` is a case variant of `a` (F&O 3.1 §5.6.2), a relation
+/// that holds both ways.
+pub(crate) fn is_case_variant(a: char, b: char) -> bool {
+    CASE_VARIANTS
+        .binary_search_by_key(&(a as u32), |(c, _)| *c)
+        .is_ok_and(|k| CASE_VARIANTS[k].1.contains(&(b as u32)))
+}
+
 /// The set with the case variants of each of its characters, and the
 /// number of table entries it visited, which is its work beyond the set
 /// itself: a wide range visits thousands.

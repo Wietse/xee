@@ -53,6 +53,14 @@ pub(crate) enum Inst {
 pub(crate) struct Program {
     pub(crate) insts: Vec<Inst>,
     pub(crate) sets: Vec<CharSet>,
+    /// The steps testing a character against `sets[k]` costs beyond its
+    /// visit: one for each doubling of its ranges, which the test searches.
+    pub(crate) set_costs: Vec<u64>,
+    /// For each instruction a PikeVM thread waits at, a class or `Match`,
+    /// its row in the thread lists' slot tables; `usize::MAX` for the
+    /// others, which hold no thread. `rows` such instructions.
+    pub(crate) row_of: Vec<usize>,
+    pub(crate) rows: usize,
     /// Capture slots: two for the match and two per group.
     pub(crate) slots: usize,
     /// Progress registers: one per nesting level of checked iterations (a
@@ -155,9 +163,29 @@ pub(crate) fn compile(
     c.push(Inst::Save(1))?;
     c.push(Inst::Match)?;
     c.insts.shrink_to_fit();
+    let set_costs = c
+        .sets
+        .iter()
+        .map(|set| u64::from(set.ranges().len().max(1).ilog2()))
+        .collect();
+    let mut rows = 0;
+    let row_of = c
+        .insts
+        .iter()
+        .map(|inst| match inst {
+            Inst::Set(_) | Inst::Match => {
+                rows += 1;
+                rows - 1
+            }
+            _ => usize::MAX,
+        })
+        .collect();
     Ok(Program {
         insts: c.insts,
         sets: c.sets,
+        set_costs,
+        row_of,
+        rows,
         slots: 2 * (group_count + 1),
         regs: c.regs,
         has_backrefs: c.has_backrefs,

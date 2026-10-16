@@ -16,7 +16,7 @@ We don't go for streaming support.
 
 ## xsl:analyze-string
 
-We have regexml now, so should be able to implement.
+We have `xee-regex` now, so should be able to implement.
 
 ## xsl:apply-imports
 
@@ -182,7 +182,7 @@ TODO
 
 ## xsl:matching-substring
 
-TODO: regexml
+TODO: `xee-regex`
 
 ## xsl:merge
 
@@ -228,7 +228,7 @@ TODO: template rule subsystem, import system
 
 ## xsl:non-matching-substring
 
-Have regexml now.
+Have `xee-regex` now.
 
 ## xsl:number
 

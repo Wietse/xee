@@ -1,11 +1,14 @@
-//! The XPath 3.1 regular-expression dialect (F&O 3.1 §5.6.1, over the
-//! grammar of XSD 1.1 Part 2 Appendix G) parsed to a tree whose character
-//! classes are resolved to sets, case variants included under flag `i`.
+//! A pattern parsed to a tree whose character classes are resolved to
+//! sets, case variants included under flag `i`, in one of two dialects:
+//! XPath 3.1's (F&O 3.1 §5.6.1, over the grammar of XSD 1.1 Part 2
+//! Appendix G), or XSD 1.1's own (Appendix G alone, without flags).
 //!
 //! Parsing is bounded before it starts by the pattern's length, and as it
 //! goes by the nesting depth, the nodes it builds and the ranges of the
 //! character sets it builds, so that no pattern takes more than a bounded
 //! stack, memory or time to parse.
+
+use std::collections::BTreeSet;
 
 use crate::charset::CharSet;
 use crate::unicode;
@@ -55,6 +58,20 @@ pub(crate) enum Node {
     },
 }
 
+/// The dialect a pattern is read in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Dialect {
+    /// F&O 3.1 §5.6.1: XSD's grammar, with `^` and `$` as anchors
+    /// (§5.6.1.1), `\$` as an escape, reluctant quantifiers (§5.6.1.2),
+    /// non-capturing groups (§5.6.1.3) and back-references (§5.6.1.4); an
+    /// unknown block name is an error (§5.6.1.5).
+    XPath,
+    /// XSD 1.1 Part 2 Appendix G alone: `^` and `$` are normal characters
+    /// ([73] NormalChar), none of F&O's additions is there, and an unknown
+    /// block name is the set of all characters (§G.4.2.4).
+    Xsd,
+}
+
 #[derive(Debug)]
 pub(crate) struct Parsed {
     pub(crate) node: Node,
@@ -62,9 +79,33 @@ pub(crate) struct Parsed {
     /// `group_parent[n]` is the capturing group that most closely encloses
     /// group `n`, or 0; index 0 is unused.
     pub(crate) group_parent: Vec<usize>,
+    /// The XSD dialect's unknown block names, each once, in the order of
+    /// their UTF-8 bytes; empty in the XPath dialect, which refuses them.
+    pub(crate) unknown_blocks: Vec<String>,
 }
 
+/// Parses `pattern` in the XPath 3.1 dialect under `flags`.
 pub(crate) fn parse(pattern: &str, flags: &Flags) -> Result<Parsed, Error> {
+    parse_in(pattern, flags, Dialect::XPath)
+}
+
+/// Parses `pattern` in the XSD 1.1 dialect, which has no flags, anchored
+/// at both ends: XSD 1.1 Part 2 Appendix G's regular expressions are
+/// "implicitly anchored at the head and tail". The tree is the pattern's
+/// between a `^` and a `$`, which without flag `m` match only at the
+/// start and the end of the input, so that every branch of a top-level
+/// `|` is anchored, the groups keep their numbers and the minimum length
+/// is the pattern's. The wrapping adds one level, a sequence of three, to
+/// every recursive pass over the tree (`the_nesting_ceiling_fits_a_small_stack`
+/// runs them at the nesting ceiling in this dialect too).
+pub(crate) fn parse_xsd(pattern: &str) -> Result<Parsed, Error> {
+    let mut parsed = parse_in(pattern, &Flags::default(), Dialect::Xsd)?;
+    let node = std::mem::replace(&mut parsed.node, Node::Empty);
+    parsed.node = Node::Concat(vec![Node::Bol, node, Node::Eol]);
+    Ok(parsed)
+}
+
+fn parse_in(pattern: &str, flags: &Flags, dialect: Dialect) -> Result<Parsed, Error> {
     if pattern.len() > MAX_PATTERN_LEN {
         return Err(Error::Limit(format!(
             "the pattern is longer than {MAX_PATTERN_LEN} bytes"
@@ -82,6 +123,7 @@ pub(crate) fn parse(pattern: &str, flags: &Flags) -> Result<Parsed, Error> {
             node: concat(nodes),
             group_count: 0,
             group_parent: vec![0],
+            unknown_blocks: Vec::new(),
         });
     }
     let chars: Vec<char> = if flags.x {
@@ -93,12 +135,14 @@ pub(crate) fn parse(pattern: &str, flags: &Flags) -> Result<Parsed, Error> {
         chars,
         pos: 0,
         flags,
+        dialect,
         group_count: 0,
         closed: vec![true],
         open: Vec::new(),
         group_parent: vec![0],
         depth: 0,
         counts,
+        unknown_blocks: BTreeSet::new(),
     };
     let node = p.regexp()?;
     if p.pos < p.chars.len() {
@@ -109,6 +153,7 @@ pub(crate) fn parse(pattern: &str, flags: &Flags) -> Result<Parsed, Error> {
         node,
         group_count: p.group_count,
         group_parent: p.group_parent,
+        unknown_blocks: p.unknown_blocks.into_iter().collect(),
     })
 }
 
@@ -203,6 +248,7 @@ struct Parser<'f> {
     chars: Vec<char>,
     pos: usize,
     flags: &'f Flags,
+    dialect: Dialect,
     group_count: usize,
     /// Whether each group has closed (index 0 stands for the whole match).
     closed: Vec<bool>,
@@ -211,6 +257,9 @@ struct Parser<'f> {
     group_parent: Vec<usize>,
     depth: usize,
     counts: Counts,
+    /// The XSD dialect's unknown block names so far: a set, so that a
+    /// pattern of many costs time n log n in them, not a scan per name.
+    unknown_blocks: BTreeSet<String>,
 }
 
 /// A single-character escape, a class escape or a back-reference, as found
@@ -271,8 +320,10 @@ impl Parser<'_> {
         Ok(concat(pieces))
     }
 
-    /// piece ::= atom quantifier?, with F&O 3.1 §5.6.1's reluctant
-    /// quantifiers (a `?` after the quantifier).
+    /// piece ::= atom quantifier?, with F&O 3.1 §5.6.1.2's reluctant
+    /// quantifiers (a `?` after the quantifier) in the XPath dialect. In
+    /// the XSD dialect such a `?` begins the next piece, where it is not
+    /// an atom.
     fn piece(&mut self) -> Result<Node, Error> {
         let atom = self.atom()?;
         let (min, max) = match self.peek() {
@@ -287,7 +338,7 @@ impl Parser<'_> {
             _ => return Ok(atom),
         };
         self.pos += 1;
-        let greedy = if self.peek() == Some('?') {
+        let greedy = if self.dialect == Dialect::XPath && self.peek() == Some('?') {
             self.pos += 1;
             false
         } else {
@@ -343,7 +394,9 @@ impl Parser<'_> {
     }
 
     /// atom ::= NormalChar | charClass | ( '(' regExp ')' ), with F&O 3.1
-    /// §5.6.1's `^`, `$`, back-references and non-capturing groups.
+    /// §5.6.1's `^`, `$`, back-references and non-capturing groups in the
+    /// XPath dialect. In the XSD dialect `^` and `$` are normal characters
+    /// and `(?` opens a group whose first piece begins with `?`, an error.
     fn atom(&mut self) -> Result<Node, Error> {
         self.counts.node()?;
         let c = self.peek().expect("branch stops at the end");
@@ -351,7 +404,8 @@ impl Parser<'_> {
             '(' => {
                 self.pos += 1;
                 self.enter()?;
-                let capturing = !(self.peek() == Some('?') && self.peek_at(1) == Some(':'));
+                let capturing = self.dialect == Dialect::Xsd
+                    || !(self.peek() == Some('?') && self.peek_at(1) == Some(':'));
                 let nr = if capturing {
                     self.group_count += 1;
                     let n = self.group_count;
@@ -390,11 +444,11 @@ impl Parser<'_> {
                 };
                 Ok(Node::Set(self.counts.built(set)?))
             }
-            '^' => {
+            '^' if self.dialect == Dialect::XPath => {
                 self.pos += 1;
                 Ok(Node::Bol)
             }
-            '$' => {
+            '$' if self.dialect == Dialect::XPath => {
                 self.pos += 1;
                 Ok(Node::Eol)
             }
@@ -412,8 +466,8 @@ impl Parser<'_> {
         }
     }
 
-    /// At a backslash: a SingleCharEsc, a charClassEsc, or (outside a
-    /// class, `in_class` false) a back-reference.
+    /// At a backslash: a SingleCharEsc, a charClassEsc, or (in the XPath
+    /// dialect, outside a class, `in_class` false) a back-reference.
     fn escape(&mut self, in_class: bool) -> Result<Escape, Error> {
         self.pos += 1;
         let c = self
@@ -424,8 +478,12 @@ impl Parser<'_> {
             'n' => Ok(Escape::Single('\n')),
             'r' => Ok(Escape::Single('\r')),
             't' => Ok(Escape::Single('\t')),
-            '\\' | '|' | '.' | '?' | '*' | '+' | '(' | ')' | '{' | '}' | '$' | '-' | '[' | ']'
-            | '^' => Ok(Escape::Single(c)),
+            // [84] SingleCharEsc; F&O 3.1 §5.6.1.1 adds `$` in the XPath
+            // dialect.
+            '\\' | '|' | '.' | '?' | '*' | '+' | '(' | ')' | '{' | '}' | '-' | '[' | ']' | '^' => {
+                Ok(Escape::Single(c))
+            }
+            '$' if self.dialect == Dialect::XPath => Ok(Escape::Single(c)),
             's' | 'S' | 'i' | 'I' | 'c' | 'C' | 'd' | 'D' | 'w' | 'W' => {
                 let set = unicode::class_escape(c.to_ascii_lowercase()).expect("matched above");
                 Ok(Escape::Class(if c.is_ascii_uppercase() {
@@ -457,8 +515,20 @@ impl Parser<'_> {
                     {
                         return Err(self.err("a malformed block name"));
                     }
-                    // F&O 3.1 §5.6.1: an unknown block name is FORX0002.
-                    unicode::block(block).ok_or_else(|| self.err("an unknown block name"))?
+                    match unicode::block(block) {
+                        Some(set) => set,
+                        // XSD 1.1 §G.4.2.4: `\p{IsX}` and `\P{IsX}` with an
+                        // unrecognized X each denote the set of all
+                        // characters, so `\P` is not its complement here.
+                        None if self.dialect == Dialect::Xsd => {
+                            if !self.unknown_blocks.contains(block) {
+                                self.unknown_blocks.insert(block.to_string());
+                            }
+                            return Ok(Escape::Class(CharSet::all()));
+                        }
+                        // F&O 3.1 §5.6.1.5: FORX0002.
+                        None => return Err(self.err("an unknown block name")),
+                    }
                 } else {
                     unicode::category(&name)
                         .ok_or_else(|| self.err("an unknown category"))?
@@ -466,7 +536,7 @@ impl Parser<'_> {
                 };
                 Ok(Escape::Class(if c == 'P' { set.negate() } else { set }))
             }
-            '1'..='9' if !in_class => {
+            '1'..='9' if !in_class && self.dialect == Dialect::XPath => {
                 // F&O 3.1 §5.6.1: the longest run of digits that names a
                 // group before this point; that group must have closed.
                 let mut n = c.to_digit(10).expect("a digit") as usize;

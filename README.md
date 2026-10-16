@@ -61,9 +61,11 @@ using a Rust binding system. The implementation is extensive but not everything
 is implemented yet; see
 [conformance](https://github.com/Paligo/xee/tree/main/conformance) for more.
 
-An affiliated project is [`regexml`](https://github.com/Paligo/regexml), which
-contains an XML Schema and XPath compatible version of regular expressions for
-Rust. 
+The XPath regular-expression functions run on
+[`xee-regex`](xee-regex), an engine of this repository written from F&O 3.1
+§5.6 and the XSD 1.1 regular-expression grammar. Upstream used
+[`regexml`](https://github.com/Paligo/regexml), which this fork no longer
+uses.
 
 [`xee-php`](https://github.com/Paligo/xee-php) is the start of PHP bindings for
 Xee.
@@ -188,6 +190,12 @@ The Xee project is composed of many crates. Here is a quick overview:
 - [`xee-schema-type`](xee-schema-type) - support code defininig properties of
   core XML schema basic datatypes (`xs:*`).
 
+- [`xee-regex`](xee-regex) - XPath 3.1 regular expressions: the parser, the
+  Unicode data, a PikeVM and a backtracker for back-references, and F&O's four
+  operations, each call under a step budget and a memory ceiling. Used by
+  `xee-interpreter` for `fn:matches`, `fn:replace`, `fn:tokenize`,
+  `fn:analyze-string` and the casts to types with a fixed pattern.
+
 - [`xee-xpath-load`](xee-xpath-load) - Infastructure to help defining loaders
   for XML data used by `xee-testrunner`.
 
@@ -196,9 +204,6 @@ The Xee project is composed of many crates. Here is a quick overview:
   [`faassen/xot`](https://github.com/faassen/xot) 0.31.2.
 
 Some affiliated projects exist as well maintained outside of this project:
-
-- [`regexml`](https://github.com/Paligo/regexml) - XML Schema and XPath
-  compatible regex engine.
 
 - [`xee-php`](https://github.com/Paligo/xee-php) - PHP bindings for Xee.
 

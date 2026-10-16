@@ -260,9 +260,11 @@ fn check_encoding_domain(encoding: &str) -> error::Result<()> {
 // are read, for every output method. A valid value the method does not
 // support stays SESU0011 (§9.1.9 for JSON). The value is tested as it
 // stands, without collapsing whitespace: a value of xs:NMTOKEN holds none.
+// The test runs under the budget of a fixed pattern, which grows with the
+// value, so it answers whatever the value's length.
 fn check_normalization_form_domain(form: Option<&str>) -> error::Result<()> {
     match form {
-        Some(form) if !atomic::is_nmtoken(form) => Err(error::Error::SEPM0016),
+        Some(form) if !atomic::is_nmtoken(form)? => Err(error::Error::SEPM0016),
         _ => Ok(()),
     }
 }

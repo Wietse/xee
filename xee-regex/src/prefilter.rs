@@ -1,15 +1,17 @@
 //! What a search rules out before a matcher runs, read off the parsed
 //! pattern: a small set of characters every match holds one of, so that a
-//! text with none of them has no match; and the literal text every match
-//! begins with, so that a search tries only where it occurs. Neither
-//! changes an answer: a match the matchers would find holds a character
-//! of the set and begins with the literal. Their scans are charged, so a
+//! text with none of them has no match; the literal text every match
+//! begins with, so that a search tries only where it occurs; and whether
+//! every match begins at the start of the input, so that a search tries
+//! only there. None changes an answer: a match the matchers would find
+//! holds a character of the set, begins with the literal, and of an
+//! anchored pattern begins at the start. Their scans are charged, so a
 //! call's steps move with them, mostly down, and with them where a budget
 //! refuses it.
 
 use crate::charset::CharSet;
 use crate::parse::Node;
-use crate::{Budget, Error};
+use crate::{Budget, Error, Flags};
 
 /// A scan reads its input in windows, each charged a step per byte before
 /// it is read: the first of one byte, each next one twice as long up to
@@ -35,12 +37,16 @@ pub(crate) struct Prefilter {
     pub(crate) required: Option<CharSet>,
     /// The text every match begins with; empty if none is known.
     pub(crate) prefix: String,
+    /// Every match begins at the start of the input.
+    pub(crate) anchored: bool,
 }
 
-pub(crate) fn analyse(node: &Node) -> Prefilter {
+pub(crate) fn analyse(node: &Node, flags: &Flags) -> Prefilter {
     Prefilter {
         required: required(node),
         prefix: prefix(node).0,
+        // With flag `m`, `^` also matches after a newline.
+        anchored: !flags.m && anchored(node),
     }
 }
 
@@ -140,6 +146,25 @@ fn required(node: &Node) -> Option<CharSet> {
     }
 }
 
+/// Whether every match of `node` passes a `^`, which without flag `m`
+/// matches only at the start of the input (F&O 3.1 §5.6.2): nothing
+/// before it in the match can have consumed a character, so the match
+/// begins there. A pattern these rules mark has no other match, but not
+/// every such pattern is marked: `$a`, which matches nothing, is not.
+fn anchored(node: &Node) -> bool {
+    match node {
+        Node::Bol => true,
+        Node::Empty | Node::Eol | Node::Set(_) | Node::Backref(_) => false,
+        Node::Group(_, inner) => anchored(inner),
+        // A match passes every part.
+        Node::Concat(parts) => parts.iter().any(anchored),
+        // A match is one branch's.
+        Node::Alt(branches) => branches.iter().all(anchored),
+        // A match passes at least one iteration if the minimum is one.
+        Node::Repeat { node, min, .. } => *min > 0 && anchored(node),
+    }
+}
+
 /// The literal every match of `node` begins with, and whether every match
 /// is exactly that literal, so that what follows extends it.
 fn prefix(node: &Node) -> (String, bool) {
@@ -227,10 +252,11 @@ mod tests {
             match c {
                 'i' => flags.i = true,
                 'm' => flags.m = true,
+                'q' => flags.q = true,
                 _ => unreachable!(),
             }
         }
-        analyse(&parse(p, &flags).unwrap().node)
+        analyse(&parse(p, &flags).unwrap().node, &flags)
     }
 
     fn chars(set: &Option<CharSet>) -> String {
@@ -296,6 +322,44 @@ mod tests {
         assert_eq!(filter("a{100000}", "").prefix, "a".repeat(16));
         // A literal repeated past the limit, cut inside a copy.
         assert_eq!(filter("(?:abc){100}", "").prefix, "abcabcabcabcabca");
+    }
+
+    #[test]
+    fn the_anchor() {
+        for (p, f, want) in [
+            ("^a", "", true),
+            ("^", "", true),
+            ("^a", "m", false),
+            ("a", "", false),
+            ("()a", "", false),
+            ("a$", "", false),
+            ("(a)\\1", "", false),
+            ("a^", "", true),
+            ("$^", "", true),
+            ("a*^b", "", true),
+            ("^a|^b", "", true),
+            ("(^a|^b)c", "", true),
+            ("^a|b", "", false),
+            ("(^a)+", "", true),
+            ("(^a){2,3}", "", true),
+            ("(^a)*", "", false),
+            ("(^a)?b", "", false),
+            ("(^a){0,2}", "", false),
+            ("a{0}^b", "", true),
+            ("(^)\\1", "", true),
+            ("\\^a", "", false),
+            ("^a", "q", false),
+            ("[\\^]a", "", false),
+        ] {
+            assert_eq!(filter(p, f).anchored, want, "{p} flags {f:?}");
+        }
+        // The XSD dialect's patterns are anchored at both ends; `^` and
+        // `$` are characters there.
+        let flags = Flags::default();
+        for p in ["a|b", "", "^", "x*$"] {
+            let parsed = crate::parse::parse_xsd(p).unwrap();
+            assert!(analyse(&parsed.node, &flags).anchored, "{p}");
+        }
     }
 
     fn scan(op: impl FnOnce(&mut Budget) -> Result<Option<usize>, Error>) -> (Option<usize>, u64) {

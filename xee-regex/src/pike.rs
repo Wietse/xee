@@ -141,12 +141,18 @@ impl Cache {
 /// which is on a character boundary; the leftmost's tracked slots are
 /// then [`Cache::found`] (`NONE` where unset). While no thread is alive, the
 /// search goes on where `prefix`, the literal every match begins with,
-/// next occurs.
+/// next occurs; when `anchored`, every match begins at `start`, and the
+/// search ends there.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what the prefilter found is passed apart from the program"
+)]
 pub(crate) fn search(
     prog: &Program,
     hay: &str,
     start: usize,
     prefix: &str,
+    anchored: bool,
     flags: &Flags,
     budget: &mut Budget,
     cache: &mut Cache,
@@ -165,7 +171,9 @@ pub(crate) fn search(
         }
         // Each position the search reaches is a step, threads or none.
         budget.charge(1)?;
-        if !matched {
+        // No thread begins past an anchored start, so the search ends when
+        // the last one dies.
+        if !matched && (pos == start || !anchored) {
             // A new thread at this position, below every earlier one.
             budget.charge(copy_cost(width))?;
             cache.curr.fill(NONE);

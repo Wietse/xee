@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::charset::CharSet;
+use crate::chunk;
 use crate::parse::Node;
 
 /// Ceiling: instructions after expansion. A larger program is refused,
@@ -74,6 +75,22 @@ pub(crate) struct Program {
     pub(crate) regs: usize,
     /// A back-reference anywhere: the program needs the backtracker.
     pub(crate) has_backrefs: bool,
+}
+
+impl Program {
+    /// The bytes the program keeps on the heap, each allocation at what
+    /// the allocator takes for it: the instructions, the character sets and
+    /// each set's ranges, the sets' costs and the instructions' rows.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        fn vec<T>(v: &Vec<T>) -> usize {
+            chunk(v.capacity() * size_of::<T>())
+        }
+        vec(&self.insts)
+            + vec(&self.sets)
+            + self.sets.iter().map(CharSet::heap_bytes).sum::<usize>()
+            + vec(&self.set_costs)
+            + vec(&self.row_of)
+    }
 }
 
 /// The program is over a ceiling.

@@ -20,6 +20,7 @@ pub mod interpreter;
 mod library;
 pub mod occurrence;
 pub mod pattern;
+mod regex_limits;
 pub mod sequence;
 pub mod span;
 pub mod stack;

@@ -873,16 +873,21 @@ impl From<xee_xpath_ast::ParserError> for SpannedError {
     }
 }
 
-impl From<regexml::Error> for Error {
-    fn from(e: regexml::Error) -> Self {
-        use regexml::Error::*;
+impl From<xee_regex::Error> for Error {
+    fn from(e: xee_regex::Error) -> Self {
+        use xee_regex::Error::*;
         // TODO: pass more error details into error codes
         match e {
-            Internal => panic!("Internal error in regexml engine"),
             InvalidFlags(_) => Error::FORX0001,
             Syntax(_) => Error::FORX0002,
             MatchesEmptyString => Error::FORX0003,
-            InvalidReplacementString(_) => Error::FORX0004,
+            InvalidReplacement(_) => Error::FORX0004,
+            // A pattern over one of the engine's parse ceilings, a call that
+            // needs the program of a pattern over one of its compile
+            // ceilings, or a call that would take more than its budget of
+            // steps or hold more memory than its ceiling: an implementation
+            // limit.
+            Limit(_) => Error::XPDY0130,
         }
     }
 }

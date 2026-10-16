@@ -477,13 +477,112 @@ fn the_prefilter_rules_out_a_search() {
     assert!(two < 2 * one + 1_000, "{one} {two}");
 }
 
+/// A pattern anchored at the start, outside multi-line mode, is tried
+/// there alone, on either matcher: a text that fails at its first
+/// character is not searched further, nor one that does not begin with
+/// the pattern's literal, and the searches the operations make past a
+/// match, from a later position, end at once. The scan for a character
+/// every match holds still reads a text without one, a step a byte.
+#[test]
+fn an_anchored_search_tries_the_start_alone() {
+    let n = 100_000;
+    // At most the call's set-up and a few positions' steps.
+    let few = 200;
+    let xs = "x".repeat(n);
+    let spaces = format!("{}x", " ".repeat(n));
+    let steps = |r: &Regex, hay: &str| {
+        let mut budget = Budget::new(50 * STEPS);
+        assert!(!r.is_match(hay, &mut budget).unwrap());
+        budget.spent()
+    };
+    // Per matcher: `^\s*$`'s steps on the `x`s and a space's on the run,
+    // and what `fn:replace` and `fn:tokenize` cost past the copy.
+    for (matcher, at_x, a_space, replace, tokenize) in [
+        (Matcher::Pike, 45, 10, 56, 58),
+        (Matcher::Backtrack, 11, 5, 15, 17),
+    ] {
+        let with = |p: &str, f: &str| {
+            let mut r = Regex::new(p, f).unwrap();
+            r.set_matcher(matcher);
+            r
+        };
+        let blank = with("^\\s*$", "");
+        // The thread from the start dies at the first `x`: the call's
+        // set-up and that position. A thread from the next position would
+        // add a few steps, from every later one a step or more each.
+        assert_eq!(steps(&blank, &xs), at_x, "{matcher:?}");
+        // On a run of spaces the thread from the start crosses the run, and
+        // no thread from a later position follows it.
+        let s = steps(&blank, &spaces);
+        assert_eq!(s, a_space * n as u64 + at_x, "{matcher:?}");
+        // A back-reference runs on the backtracker either way.
+        assert!(steps(&with("^(x)\\1y", ""), &xs) < few, "{matcher:?}");
+        // A text that does not begin with the literal is refused by one
+        // comparison, a step a byte of the literal, before a matcher runs:
+        // here the backtracker would try 2^24 ways through the empty
+        // groups, and the PikeVM visit each, at the start. The texts differ
+        // from the literal at its first character and at its last.
+        for text in ["zabc", "abzabc"] {
+            let p = format!("^{}(abc)\\1", "(?:|)".repeat(24));
+            assert_eq!(steps(&with(&p, ""), text), 3, "{matcher:?} {text}");
+            let p = format!("^{}abc", "(?:|)".repeat(1_000));
+            assert_eq!(steps(&with(&p, ""), text), 3, "{matcher:?} {text}");
+        }
+        // A step a byte, not a character: `ééx` is five bytes.
+        assert_eq!(steps(&with("^ééx", ""), "ééy"), 5, "{matcher:?}");
+        // With flag `m`, `^` also matches after a newline, and every
+        // position is tried.
+        assert!(steps(&with("^\\s*$", "m"), &xs) > n as u64, "{matcher:?}");
+        // After the match at the start, the next search begins past it and
+        // ends at once, before the literal's comparison and the required
+        // character's scan read the text: the operation pays for what it
+        // copies, a step a byte, and the call's set-up.
+        let r = with("^a", "");
+        let hay = format!("a{xs}");
+        let mut budget = Budget::new(STEPS);
+        assert_eq!(r.replace(&hay, "", &mut budget).unwrap(), xs);
+        assert_eq!(budget.spent(), n as u64 + replace, "{matcher:?}");
+        let mut budget = Budget::new(STEPS);
+        assert_eq!(r.tokenize(&hay, &mut budget).unwrap(), ["", &xs]);
+        assert_eq!(budget.spent(), n as u64 + tokenize, "{matcher:?}");
+    }
+    // Every pattern of the XSD dialect is anchored: a value that fails at
+    // its first character, and holds a character the pattern requires, is
+    // not searched further, and a literal facet's value is compared with
+    // the literal once.
+    let digits = format!("a{}", "1".repeat(n));
+    assert!(steps(&Regex::xsd("[0-9]+").unwrap(), &digits) < few);
+    let tail = format!("b{}", "a".repeat(n));
+    for p in ["a".repeat(16), "abc".into()] {
+        assert!(steps(&Regex::xsd(&p).unwrap(), &tail) < few, "{p}");
+    }
+    // A value without a digit is read to its end by the scan for one.
+    let letters = format!("a{}", "b".repeat(n));
+    assert_eq!(
+        steps(&Regex::xsd("[0-9]+").unwrap(), &letters),
+        n as u64 + 1
+    );
+}
+
 /// The prefilter changes no answer on texts long enough to cross its
 /// scans' windows, of characters one to four bytes long: literal-heavy
-/// patterns, under three flag sets, on both matchers.
+/// patterns, some anchored at the start, under three flag sets, on both
+/// matchers.
 #[test]
 fn the_prefilter_changes_no_answer_on_long_texts() {
-    const PIECES: [&str; 10] = [
-        "a", "b", "é", "😀", "x", "ab", "é😀", "a?", "(b|é)", "[x😀]",
+    const PIECES: [&str; 12] = [
+        "a",
+        "b",
+        "é",
+        "😀",
+        "x",
+        "ab",
+        "é😀",
+        "a?",
+        "(b|é)",
+        "[x😀]",
+        "^",
+        "(^a|^😀)",
     ];
     const LETTERS: [&str; 6] = ["a", "b", "é", "😀", "\n", "x"];
     let mut rng = Rng(0xD1B5_4A32_D192_ED03);

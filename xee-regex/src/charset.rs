@@ -54,6 +54,12 @@ impl CharSet {
         &self.ranges
     }
 
+    /// The bytes the set keeps on the heap, at what the allocator takes
+    /// for them.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        crate::chunk(self.ranges.capacity() * size_of::<(u32, u32)>())
+    }
+
     pub(crate) fn union(&self, other: &CharSet) -> CharSet {
         let mut r = self.ranges.clone();
         r.extend_from_slice(&other.ranges);

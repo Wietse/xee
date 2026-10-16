@@ -315,8 +315,8 @@ fn the_digits_after_a_dollar() {
     );
 }
 
-/// The corners the spike's differential found, where F&O decides
-/// otherwise than `regexml` answers.
+/// The corners a differential against the engine xee used before found,
+/// where F&O decides otherwise than that engine answers.
 #[test]
 fn the_corners() {
     // §5.6.1.4: a group that matched nothing matches the empty string.
@@ -392,6 +392,101 @@ fn the_anchors_in_multi_line_mode() {
     assert!(matches("a\n", "\n$", ""));
     assert!(!matches("a\nb", "a$", ""));
     assert!(!matches("a\nb", "^b", ""));
+}
+
+fn xsd(p: &str) -> Regex {
+    Regex::xsd(p).unwrap()
+}
+
+/// F&O's four operations on a pattern of the XSD dialect, which matches a
+/// whole input or nothing, each under its caller's budget.
+#[test]
+fn the_operations_on_the_xsd_dialect() {
+    let mut budget = Budget::new(STEPS);
+    let b = &mut budget;
+    let r = xsd("(a)(b)?|c");
+    assert!(r.is_match("ab", b).unwrap() && r.is_match("a", b).unwrap());
+    assert!(!r.is_match("xab", b).unwrap() && !r.is_match("ac", b).unwrap());
+    // `$` in a replacement string is F&O 3.1 §5.6.4's, whatever the
+    // dialect.
+    assert_eq!(r.replace("ab", "[$2$1]", b).unwrap(), "[ba]");
+    assert_eq!(r.replace("a", "[$2$1\\$]", b).unwrap(), "[a$]");
+    assert_eq!(r.replace("abab", "[$1]", b).unwrap(), "abab");
+    assert!(matches!(
+        r.replace("ab", "$", b),
+        Err(Error::InvalidReplacement(_))
+    ));
+    assert_eq!(r.tokenize("c", b).unwrap(), ["", ""]);
+    assert_eq!(r.tokenize("cc", b).unwrap(), ["cc"]);
+    assert_eq!(
+        r.analyze("ab", b).unwrap(),
+        [AnalyzeEntry::Match(vec![
+            group(1, vec![text("a")]),
+            group(2, vec![text("b")])
+        ])]
+    );
+    assert_eq!(
+        r.analyze("abc", b).unwrap(),
+        [AnalyzeEntry::NonMatch("abc".into())]
+    );
+    // FORX0003, from the pattern's minimum length.
+    for op in [
+        |r: &Regex, b: &mut Budget| r.tokenize("a", b).map(|_| ()),
+        |r: &Regex, b: &mut Budget| r.replace("a", "x", b).map(|_| ()),
+        |r: &Regex, b: &mut Budget| r.analyze("a", b).map(|_| ()),
+    ] {
+        assert_eq!(op(&xsd("a*"), b), Err(Error::MatchesEmptyString));
+    }
+}
+
+/// The XSD dialect has no back-references, so its patterns run on the
+/// PikeVM: `(a+)+` on 30 `a`s and a `b` answers in a few hundred steps,
+/// where the backtracker spends any budget a test could give.
+#[test]
+fn the_xsd_dialect_runs_on_the_pikevm() {
+    let hay = format!("{}b", "a".repeat(30));
+    let r = xsd("(a+)+");
+    let mut budget = Budget::new(10_000);
+    assert!(!r.is_match(&hay, &mut budget).unwrap());
+    assert!(budget.spent() < 40 * 31, "{}", budget.spent());
+    let mut r = xsd("(a+)+");
+    r.set_matcher(Matcher::Backtrack);
+    limit(r.is_match(&hay, &mut Budget::new(STEPS)), "budget");
+}
+
+/// An operation on one input under a budget.
+type Op<'a> = dyn Fn(&mut Budget) -> Result<(), Error> + 'a;
+
+/// A pattern of the XSD dialect is refused at its caller's budget and
+/// memory ceiling, in each of the four operations, as one of the XPath
+/// dialect is.
+#[test]
+fn the_xsd_dialect_is_refused_at_its_budget() {
+    let r = xsd("([a-z]+)");
+    let hay = "a".repeat(1000);
+    let ops: [&Op; 4] = [
+        &|b| r.is_match(&hay, b).map(|_| ()),
+        &|b| r.replace(&hay, "[$1]", b).map(|_| ()),
+        &|b| r.tokenize(&hay, b).map(|_| ()),
+        &|b| r.analyze(&hay, b).map(|_| ()),
+    ];
+    for op in ops {
+        let mut budget = Budget::new(STEPS);
+        op(&mut budget).unwrap();
+        let cost = budget.spent();
+        assert!(cost > 1000);
+        assert!(op(&mut Budget::new(cost)).is_ok());
+        limit(op(&mut Budget::new(cost - 1)), "budget");
+    }
+    // The memory a call holds: a replacement or an analysis of a
+    // thousand-character match, and the one token of an input that does
+    // not match, each hold more than 1,000 bytes.
+    let unmatched = format!("{hay}!");
+    let held: [&Op; 3] = [ops[1], &|b| r.tokenize(&unmatched, b).map(|_| ()), ops[3]];
+    for op in held {
+        limit(op(&mut Budget::with_memory(STEPS, 1000)), "memory");
+        assert!(op(&mut Budget::with_memory(STEPS, 1 << 20)).is_ok());
+    }
 }
 
 /// Plan D11's capture model: a quantifier that takes no iteration unsets

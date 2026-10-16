@@ -39,3 +39,9 @@ xee-xpath-macros = { workspace = true }
 [[bench]]
 name = "xpath"
 harness = false
+
+# The regular-expression functions on synthetic inputs; its workloads are
+# also checked by tests/regex_bench_inputs.rs.
+[[bench]]
+name = "regex"
+harness = false

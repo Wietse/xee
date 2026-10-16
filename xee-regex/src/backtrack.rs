@@ -46,12 +46,17 @@ impl Cache {
 
 /// The leftmost match starting at or after byte offset `start`, which is
 /// on a character boundary, tried only where `prefix`, the literal every
-/// match begins with, occurs.
+/// match begins with, occurs, and when `anchored`, at `start` alone.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what the prefilter found is passed apart from the program"
+)]
 pub(crate) fn search(
     prog: &Program,
     hay: &str,
     start: usize,
     prefix: &str,
+    anchored: bool,
     flags: &Flags,
     budget: &mut Budget,
     cache: &mut Cache,
@@ -68,6 +73,9 @@ pub(crate) fn search(
             // Copying the match's slots out of the cache.
             budget.charge(prog.slots as u64)?;
             return Ok(Some(cache.slots.clone()));
+        }
+        if anchored {
+            return Ok(None);
         }
         match hay[at..].chars().next() {
             Some(c) => at += c.len_utf8(),

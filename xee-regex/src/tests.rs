@@ -5,7 +5,7 @@
 use crate::charset::CharSet;
 use crate::compile;
 use crate::parse::{self, Node};
-use crate::{Error, Flags, Regex};
+use crate::{Budget, Error, Flags, Regex};
 
 fn ok(p: &str, f: &str) -> Regex {
     Regex::new(p, f).unwrap_or_else(|e| panic!("{p:?} flags {f:?}: {e}"))
@@ -45,6 +45,28 @@ fn listing(p: &str) -> String {
     ok(p, "").program_listing().unwrap()
 }
 
+/// The XSD dialect's compiled pattern.
+fn xsd(p: &str) -> Regex {
+    Regex::xsd(p).unwrap_or_else(|e| panic!("{p:?} in the XSD dialect: {e}"))
+}
+
+fn xsd_syntax(p: &str) {
+    match Regex::xsd(p) {
+        Err(Error::Syntax(_)) => {}
+        other => panic!("{p:?}: expected a syntax error in the XSD dialect, got {other:?}"),
+    }
+}
+
+/// Whether `hay` is in the language of the XSD-dialect pattern `p`.
+fn xsd_match(p: &str, hay: &str) -> bool {
+    xsd(p).is_match(hay, &mut Budget::new(1 << 20)).unwrap()
+}
+
+/// Whether the XPath-dialect pattern `p` matches somewhere in `hay`.
+fn xpath_match(p: &str, hay: &str) -> bool {
+    ok(p, "").is_match(hay, &mut Budget::new(1 << 20)).unwrap()
+}
+
 #[test]
 fn flags() {
     for f in ["", "s", "m", "i", "x", "q", "smixq", "ii"] {
@@ -77,6 +99,102 @@ fn branches() {
     syntax("(a");
 }
 
+/// XSD 1.1 Part 2 Appendix G's regular expressions are "implicitly
+/// anchored at the head and tail": the XSD dialect matches a string only
+/// as a whole, with every branch anchored, where the XPath dialect matches
+/// anywhere. The groups keep their numbers, and the minimum length is the
+/// pattern's.
+#[test]
+fn xsd_matches_the_whole_value() {
+    for (p, yes, no) in [
+        (
+            "a|b",
+            &["a", "b"][..],
+            &["ax", "xa", "xb", "bx", "ab", ""][..],
+        ),
+        ("ab", &["ab"], &["abab", "xab", "abx", "a"]),
+        ("", &[""], &["a", "\n"]),
+        ("|a", &["", "a"], &["aa", "b"]),
+        ("a*", &["", "aaa"], &["aab", "ba"]),
+        ("(a)|b(c)", &["a", "bc"], &["ab", "bcx", "abc"]),
+    ] {
+        for hay in yes {
+            assert!(xsd_match(p, hay), "{p:?} on {hay:?}");
+        }
+        for hay in no {
+            assert!(!xsd_match(p, hay), "{p:?} on {hay:?}");
+        }
+    }
+    assert!(xpath_match("a|b", "ax") && xpath_match("a|b", "xb"));
+    let r = xsd("(a)(b(c))");
+    assert_eq!(r.group_count(), 3);
+    assert_eq!(r.min_len(), 3);
+    assert_eq!(xsd("a{2,3}|b*").min_len(), 0);
+    // The program: the pattern's between the anchors, as `^(?:a|b)$` is
+    // in XPath.
+    let l = xsd("a|b").program_listing().unwrap();
+    assert_eq!(l, ok("^(?:a|b)$", "").program_listing().unwrap());
+    assert!(l.ends_with("0: save 0\n1: bol\n2: split 3 5\n3: set 0\n4: jmp 6\n5: set 1\n6: eol\n7: save 1\n8: match\n"), "{l}");
+    // The groups' captures, through `fn:replace`.
+    let replaced = xsd("(a)(b)?")
+        .replace("a", "[$1|$2]", &mut Budget::new(1 << 20))
+        .unwrap();
+    assert_eq!(replaced, "[a|]");
+}
+
+/// The XSD dialect has no flags: `.` is every character but #xA and #xD
+/// (XSD 1.1 §G.4.2.5), and nothing matches case-blind or across lines.
+#[test]
+fn xsd_has_no_flags() {
+    assert!(xsd_match(".", "a") && xsd_match(".", "\u{10FFFF}") && xsd_match(".", "\u{2028}"));
+    assert!(!xsd_match(".", "\n") && !xsd_match(".", "\r"));
+    assert!(xsd_match("[.\\n\\r]", "\n"));
+    assert!(!xsd_match("a", "A") && !xsd_match("k", "\u{212A}") && !xsd_match("[a-z]", "A"));
+    // `$` and `^` would anchor lines in XPath with `m`; here they are
+    // characters, and the value is matched whole, a newline in it or not.
+    assert!(!xsd_match("a", "a\n") && !xsd_match("a", "\na") && xsd_match("a\\nb", "a\nb"));
+    // Whitespace is the pattern's own.
+    assert!(xsd_match("a b", "a b") && !xsd_match("a b", "ab"));
+}
+
+/// `Regex::unknown_blocks` lists each unknown name an XSD pattern uses,
+/// once, in the order of the names' UTF-8 bytes, without the `Is`; known
+/// names are not listed, and a pattern of the XPath dialect lists none.
+#[test]
+fn xsd_lists_the_unknown_block_names() {
+    let r =
+        xsd("\\p{IsZed}[\\P{IsAlpha}\\p{IsBasicLatin}]\\p{Isa-1}\\P{IsZed}(\\p{Is9}|\\p{IsGreek})");
+    assert_eq!(r.unknown_blocks(), ["9", "Alpha", "Zed", "a-1"]);
+    assert!(xsd("a\\p{L}\\p{IsGreekandCoptic}")
+        .unknown_blocks()
+        .is_empty());
+    // Case and hyphens are the name's, so another spelling of a block is
+    // unknown.
+    assert_eq!(
+        xsd("\\p{Isbasiclatin}\\p{IsLatin1Supplement}").unknown_blocks(),
+        ["Latin1Supplement", "basiclatin"]
+    );
+    for (p, f) in [
+        ("a", ""),
+        ("\\p{IsBasicLatin}", "i"),
+        ("\\p{IsNoSuchBlock}", "q"),
+    ] {
+        assert!(ok(p, f).unknown_blocks().is_empty());
+    }
+    // A pattern without unknown names allocates nothing for the list, in
+    // either dialect, so the list adds nothing to `heap_bytes`.
+    for r in [
+        ok("a", ""),
+        ok("(a)(b)\\1", ""),
+        ok("\\p{IsBasicLatin}+", "i"),
+        ok("\\p{IsNoSuchBlock}", "q"),
+        xsd("a"),
+        xsd("\\p{IsGreek}[\\p{L}]"),
+    ] {
+        assert_eq!(r.unknown_blocks.capacity(), 0);
+    }
+}
+
 #[test]
 fn quantifiers() {
     for p in [
@@ -104,6 +222,21 @@ fn quantifiers() {
     );
 }
 
+/// XSD 1.1 [67] quantifier has no reluctant form (F&O 3.1 §5.6.1.2 adds
+/// it): a `?` after a quantifier begins a piece, where it is no atom. The
+/// greedy forms are the same in both dialects.
+#[test]
+fn xsd_has_no_reluctant_quantifiers() {
+    for p in ["a??", "a*?", "a+?", "a{2}?", "a{2,}?", "a{2,3}?", "(a)*?b"] {
+        ok(p, "");
+        xsd_syntax(p);
+    }
+    for p in ["a?", "a*", "a+", "a{2}", "a{2,}", "a{2,3}", "a?b?", "\\??"] {
+        xsd(p);
+    }
+    assert!(xsd_match("a{2,3}", "aaa") && !xsd_match("a{2,3}", "aaaa"));
+}
+
 #[test]
 fn atoms() {
     for p in [
@@ -121,6 +254,38 @@ fn atoms() {
     assert!(has(&dot, 'a') && has(&dot, '\u{10FFFF}'));
     assert!(!has(&dot, '\n') && !has(&dot, '\r'));
     assert!(has(&set(".", "s"), '\n'));
+}
+
+/// XSD 1.1 [73] NormalChar excludes neither `^` nor `$`: in the XSD
+/// dialect each is the character itself, quantified like any other; F&O
+/// 3.1 §5.6.1.1 makes them the anchors of the XPath dialect.
+#[test]
+fn xsd_anchors_are_normal_characters() {
+    assert!(xsd_match("^", "^") && !xsd_match("^", ""));
+    assert!(xsd_match("$", "$") && !xsd_match("$", ""));
+    assert!(xsd_match("a^b$c", "a^b$c") && !xsd_match("a^b$c", "abc"));
+    assert!(xsd_match("^*", "") && xsd_match("^*", "^^^") && !xsd_match("^*", "^a"));
+    assert!(xsd_match("$+", "$$") && !xsd_match("$+", ""));
+    assert!(xsd_match("^{2}a$?", "^^a") && xsd_match("^{2}a$?", "^^a$"));
+    assert!(xsd_match("(^|$)", "$"));
+    assert!(xsd_match("^$", "^$") && !xsd_match("^$", ""));
+    // In XPath, anchors that consume nothing.
+    assert!(xpath_match("^$", "") && !xpath_match("^$", "^$"));
+    assert!(!xpath_match("a^b$c", "a^b$c"));
+    assert!(xpath_match("^a$", "a") && !xpath_match("^a$", "^a$"));
+}
+
+/// XSD 1.1 [72] atom has no `(?:` (F&O 3.1 §5.6.1.3 adds it): `(?` opens
+/// a capturing group whose first piece begins with `?`.
+#[test]
+fn xsd_has_no_non_capturing_groups() {
+    assert_eq!(ok("(?:a)(b)", "").group_count(), 1);
+    for p in ["(?:a)", "(?:)", "a(?:b|c)d", "(?a)"] {
+        xsd_syntax(p);
+    }
+    // A `?` that a class or an escape holds is a character.
+    assert!(xsd_match("([?]:a)", "?:a") && xsd_match("(\\?:a)", "?:a"));
+    assert_eq!(xsd("([?]:a)").group_count(), 1);
 }
 
 #[test]
@@ -155,6 +320,41 @@ fn single_character_escapes() {
         "\\b", "\\B", "\\x41", "\\u0041", "\\0", "\\a", "\\e", "\\", "\\Q", "\\k",
     ] {
         syntax(p);
+    }
+}
+
+/// XSD 1.1 [84] SingleCharEsc has no `\$` (F&O 3.1 §5.6.1.1 adds it); its
+/// other escapes are the XPath dialect's.
+#[test]
+fn xsd_has_no_dollar_escape() {
+    assert!(xpath_match("\\$", "$"));
+    for p in ["\\$", "a\\$", "[\\$]", "[a-\\$]"] {
+        xsd_syntax(p);
+    }
+    for (p, hay) in [
+        ("\\n", "\n"),
+        ("\\r", "\r"),
+        ("\\t", "\t"),
+        ("\\\\", "\\"),
+        ("\\|", "|"),
+        ("\\.", "."),
+        ("\\?", "?"),
+        ("\\*", "*"),
+        ("\\+", "+"),
+        ("\\(", "("),
+        ("\\)", ")"),
+        ("\\{", "{"),
+        ("\\}", "}"),
+        ("\\-", "-"),
+        ("\\[", "["),
+        ("\\]", "]"),
+        ("\\^", "^"),
+        ("[$]", "$"),
+    ] {
+        assert!(xsd_match(p, hay), "{p}");
+    }
+    for p in ["\\b", "\\x41", "\\0", "\\"] {
+        xsd_syntax(p);
     }
 }
 
@@ -199,6 +399,61 @@ fn class_escapes() {
     }
 }
 
+/// XSD 1.1 §G.4.2.4: `\p{IsX}` and `\P{IsX}`, with X well formed (IsBlock
+/// ::= 'Is' [a-zA-Z0-9#x2D]+) but not a block, each denote the set of all
+/// characters, inside a class too; F&O 3.1 §5.6.1.5 makes them FORX0002.
+#[test]
+fn xsd_unknown_blocks_are_every_character() {
+    let every = ["a", "\n", "\r", "\u{0}", "\u{10FFFF}", "\u{E9}"];
+    for p in ["\\p{IsNoSuchBlock}", "\\P{IsNoSuchBlock}"] {
+        syntax(p);
+        for c in every {
+            assert!(xsd_match(p, c), "{p} on {c:?}");
+        }
+        assert!(!xsd_match(p, "") && !xsd_match(p, "ab"));
+        assert_eq!(xsd(p).unknown_blocks(), ["NoSuchBlock"]);
+    }
+    // Inside a class: a union with every character, its negation and a
+    // subtraction of it empty.
+    for c in every {
+        assert!(xsd_match("[a\\p{IsX}]", c) && xsd_match("[\\P{IsX}a]", c));
+        assert!(!xsd_match("[^\\p{IsX}]", c) && !xsd_match("[^\\P{IsX}]", c));
+        assert!(!xsd_match("[a-[\\P{IsX}]]", c) && !xsd_match("[a-[\\p{IsX}]]", c));
+    }
+    // QT3 re00216, `matches('qwerty', '\p{IsaA0-a9}')`: FORX0002 in XPath
+    // (W3C bug 20575); `aA0-a9` is a well-formed, unknown block name.
+    syntax("\\p{IsaA0-a9}");
+    assert!(xsd_match("\\p{IsaA0-a9}*", "qwerty"));
+    assert!(xsd_match("\\p{IsaA0-a9}", "q") && !xsd_match("\\p{IsaA0-a9}", "qwerty"));
+    // A known block is the same set in both dialects, and its complement.
+    assert!(xsd_match("\\p{IsBasicLatin}", "a") && !xsd_match("\\p{IsBasicLatin}", "\u{E9}"));
+    assert!(!xsd_match("\\P{IsBasicLatin}", "a") && xsd_match("\\P{IsBasicLatin}", "\u{E9}"));
+    assert!(
+        xsd_match("\\p{IsGreek}", "\u{3B1}") && xsd(r"\p{IsGreek}").unknown_blocks().is_empty()
+    );
+    // A category that is not one stays an error.
+    xsd_syntax("\\p{Xx}");
+}
+
+/// A name that does not match IsBlock is no block escape, in either
+/// dialect: the escape is malformed.
+#[test]
+fn xsd_malformed_block_names_stay_errors() {
+    for p in [
+        "\\p{Is}",
+        "\\P{Is}",
+        "\\p{Is_x}",
+        "\\p{IsBasic Latin}",
+        "\\p{Is\u{E9}}",
+        "\\p{Is.}",
+        "[\\p{Is}]",
+        "\\p{IsX",
+    ] {
+        syntax(p);
+        xsd_syntax(p);
+    }
+}
+
 #[test]
 fn back_references() {
     ok("(a)\\1", "");
@@ -228,6 +483,32 @@ fn back_references() {
     syntax("(a)(((((((((\\10)))))))))");
     // No back-reference in a class.
     syntax("(a)[\\1]");
+}
+
+/// XSD 1.1 has no back-references (F&O 3.1 §5.6.1.4 adds them): `\` and a
+/// digit is no escape of its grammar, whatever groups precede it.
+#[test]
+fn xsd_has_no_back_references() {
+    let groups = "(a)".repeat(12);
+    for n in 1..=9 {
+        let p = format!("{groups}\\{n}");
+        ok(&p, "");
+        xsd_syntax(&p);
+    }
+    for p in [format!("{groups}\\10"), format!("{groups}\\12")] {
+        assert!(ok(&p, "")
+            .program_listing()
+            .unwrap()
+            .contains("back-references"));
+        xsd_syntax(&p);
+    }
+    xsd_syntax("\\1");
+    xsd_syntax("(a)[\\1]");
+    // So no pattern of the dialect needs the backtracker.
+    assert!(!xsd(&groups)
+        .program_listing()
+        .unwrap()
+        .contains("back-references"));
 }
 
 #[test]
@@ -448,11 +729,22 @@ fn nesting_has_a_ceiling() {
         "",
         "nests deeper",
     );
+    // The same ceiling in the XSD dialect, whose groups all capture.
+    let xsd_limit = |p: &str| match Regex::xsd(p) {
+        Err(Error::Limit(m)) => assert!(m.contains("nests deeper"), "{m}"),
+        other => panic!("expected a limit, got {:?}", other.map(|_| ())),
+    };
+    assert!(xsd(&format!("{}a{}", "(".repeat(d), ")".repeat(d))).is_compiled());
+    xsd_limit(&format!("{}a{}", "(".repeat(d + 1), ")".repeat(d + 1)));
+    xsd(&format!("[{}b{}]", "a-[".repeat(d - 1), "]".repeat(d - 1)));
+    xsd_limit(&format!("[{}b{}]", "a-[".repeat(d), "]".repeat(d)));
+    xsd_limit(&format!("{}a{}", "(".repeat(100_000), ")".repeat(100_000)));
 }
 
-/// Parsing, the minimum length, compiling and dropping, each recursive,
-/// at the nesting ceiling on a 2 MiB stack, in the build the gate runs
-/// (debug).
+/// Parsing, the minimum length, the prefilter's reading, compiling and
+/// dropping, each recursive, at the nesting ceiling on a 2 MiB stack, in
+/// the build the gate runs (debug); in the XSD dialect too, whose groups
+/// all capture and whose tree is one level deeper, between its anchors.
 #[test]
 fn the_nesting_ceiling_fits_a_small_stack() {
     let d = parse::MAX_DEPTH;
@@ -462,11 +754,23 @@ fn the_nesting_ceiling_fits_a_small_stack() {
         format!("{}a{}", "(?:b?".repeat(d), ")*".repeat(d)),
         format!("[{}b{}]", "a-[".repeat(d - 1), "]".repeat(d - 1)),
     ];
+    let xsd_shapes = [
+        format!("{}a{}", "(".repeat(d), ")".repeat(d)),
+        format!("{}a{}", "(b?".repeat(d), ")?".repeat(d)),
+        format!("{}a{}", "(b?".repeat(d), ")*".repeat(d)),
+        format!("{}a{}", "(b|".repeat(d), "){1}".repeat(d)),
+        format!("[{}b{}]", "a-[".repeat(d - 1), "]".repeat(d - 1)),
+    ];
     std::thread::Builder::new()
         .stack_size(2 << 20)
         .spawn(move || {
             for p in &shapes {
                 let r = Regex::new(p, "").unwrap();
+                assert!(r.is_compiled());
+                drop(r);
+            }
+            for p in &xsd_shapes {
+                let r = Regex::xsd(p).unwrap();
                 assert!(r.is_compiled());
                 drop(r);
             }
@@ -504,6 +808,49 @@ fn a_repetitions_body_is_walked_once() {
     // Optional copies of a body that emits nothing stop at the first, short
     // of the visits ceiling.
     assert!(ok("(?:){0,2147483647}x", "").is_compiled());
+}
+
+/// The XSD dialect collects its unknown block names in a set: a pattern
+/// of about 100,000 distinct ones, 1 MiB, compiles in time of the order
+/// of one of known names, not a scan of the names so far at each.
+#[test]
+fn xsd_collects_unknown_block_names_in_a_set() {
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let mut unknown = String::new();
+    let mut n = 0;
+    // `\p{Is0xyz}`: no block's name begins with a digit.
+    'names: for a in digits {
+        for b in digits {
+            for c in digits {
+                if unknown.len() + 10 > parse::MAX_PATTERN_LEN {
+                    break 'names;
+                }
+                unknown.push_str("\\p{Is0");
+                for &x in [a, b, c] {
+                    unknown.push(char::from(x));
+                }
+                unknown.push('}');
+                n += 1;
+            }
+        }
+    }
+    let known = "\\p{IsLao}".repeat(unknown.len() / 9);
+    let time = |p: &str| {
+        let t = std::time::Instant::now();
+        let r = xsd(p);
+        (t.elapsed(), r)
+    };
+    let (known_time, r) = time(&known);
+    assert!(r.unknown_blocks().is_empty() && r.is_compiled());
+    let (unknown_time, r) = time(&unknown);
+    assert_eq!(r.unknown_blocks().len(), n);
+    assert!(n > 100_000);
+    assert!(r.unknown_blocks().windows(2).all(|w| w[0] < w[1]));
+    // A scan per name would compare about n^2 / 2 = 5 * 10^9 names.
+    assert!(
+        unknown_time < known_time * 10 + std::time::Duration::from_secs(1),
+        "{unknown_time:?} against {known_time:?}"
+    );
 }
 
 #[test]

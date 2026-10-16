@@ -422,6 +422,14 @@ impl<'a> Interpreter<'a> {
                     if let Some(value) = value {
                         let cast_value =
                             value.cast_to_schema_type(cast_type.xs, self.runnable.static_context());
+                        // An implementation limit the cast reached (XPDY0130)
+                        // does not say whether the value can be cast: it is
+                        // raised, not answered false. The casts that test a
+                        // pattern do so under a budget that grows with the
+                        // value, which a correct test never reaches.
+                        if let Err(error::Error::XPDY0130) = cast_value {
+                            Err(error::Error::XPDY0130)?;
+                        }
                         self.state.push(cast_value.is_ok());
                     } else if cast_type.empty_sequence_allowed {
                         self.state.push(true)
@@ -1108,7 +1116,7 @@ impl<'a> Interpreter<'a> {
         a.effective_boolean_value()
     }
 
-    pub(crate) fn regex(&self, pattern: &str, flags: &str) -> error::Result<Rc<regexml::Regex>> {
+    pub(crate) fn regex(&self, pattern: &str, flags: &str) -> error::Result<Rc<xee_regex::Regex>> {
         self.state.regex(pattern, flags)
     }
 

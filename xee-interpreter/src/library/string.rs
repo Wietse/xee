@@ -6,8 +6,8 @@ use ahash::{HashMap, HashMapExt, HashSet, HashSetExt};
 use ibig::IBig;
 use icu::normalizer::{ComposingNormalizer, DecomposingNormalizer};
 
-use regexml::{AnalyzeEntry, MatchEntry};
 use xee_name::{Name, FN_NAMESPACE};
+use xee_regex::{AnalyzeEntry, Budget, MatchEntry};
 use xee_schema_type::Xs;
 use xee_xpath_macros::xpath_fn;
 use xee_xpath_type::ast;
@@ -16,6 +16,7 @@ use xot::Xot;
 use crate::context::DynamicContext;
 use crate::function::{self, StaticFunctionDescription};
 use crate::interpreter::Interpreter;
+use crate::regex_limits::STEPS_PER_CALL;
 use crate::string::Collation;
 use crate::{atomic, error, interpreter, occurrence, sequence, wrap_xpath_fn};
 
@@ -555,7 +556,7 @@ fn matches(
 ) -> error::Result<bool> {
     let regex = interpreter.regex(pattern, flags)?;
     let input = input.unwrap_or("");
-    Ok(regex.is_match(input))
+    Ok(regex.is_match(input, &mut Budget::new(STEPS_PER_CALL))?)
 }
 
 #[xpath_fn("fn:replace($input as xs:string?, $pattern as xs:string, $replacement as xs:string, $flags as xs:string) as xs:string")]
@@ -588,7 +589,7 @@ fn replace(
 ) -> error::Result<String> {
     let regex = interpreter.regex(pattern, flags)?;
     let input = input.unwrap_or("");
-    Ok(regex.replace_all(input, replacement)?)
+    Ok(regex.replace(input, replacement, &mut Budget::new(STEPS_PER_CALL))?)
 }
 
 #[xpath_fn(
@@ -620,7 +621,7 @@ fn tokenize(
 ) -> error::Result<Vec<String>> {
     let regex = interpreter.regex(pattern, flags)?;
     let input = input.unwrap_or("");
-    Ok(regex.tokenize(input)?.collect::<Vec<_>>())
+    Ok(regex.tokenize(input, &mut Budget::new(STEPS_PER_CALL))?)
 }
 
 #[xpath_fn("fn:analyze-string($input as xs:string?, $pattern as xs:string) as element()")]
@@ -677,7 +678,7 @@ fn analyze_string(
 ) -> error::Result<sequence::Sequence> {
     let regex = interpreter.regex(pattern, flags)?;
     let input = input.unwrap_or("");
-    let analyze_results = regex.analyze(input)?;
+    let analyze_results = regex.analyze(input, &mut Budget::new(STEPS_PER_CALL))?;
 
     let xot = interpreter.state.xot_mut();
     // TODO: do this somewhere on startup time so we don't need to do it for each

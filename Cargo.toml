@@ -43,6 +43,7 @@ xee-interpreter = { path = "xee-interpreter" }
 xee-ir = { path = "xee-ir" }
 xee-json = { path = "xee-json" }
 xee-name = { path = "xee-name" }
+xee-regex = { path = "xee-regex" }
 xee-schema-type = { path = "xee-schema-type" }
 xee-xpath = { path = "xee-xpath" }
 xee-xpath-ast = { path = "xee-xpath-ast" }
@@ -70,7 +71,6 @@ serde = "1"
 chrono = "0.4.40"
 blanket = "0.4.0"
 thiserror = "2.0.12"
-regexml = "0.2.1"
 regex = "1.11.1"
 iri-string = "0.7.7"
 insta = "1.42.2"

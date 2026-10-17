@@ -150,6 +150,8 @@ pub struct Budget {
     /// The bytes the current call holds, and may hold.
     held: usize,
     memory: usize,
+    /// Whether a charge was refused.
+    over: bool,
 }
 
 impl Budget {
@@ -166,6 +168,7 @@ impl Budget {
             left: steps,
             held: 0,
             memory: bytes,
+            over: false,
         }
     }
 
@@ -175,9 +178,21 @@ impl Budget {
         self.limit - self.left
     }
 
+    /// Whether a charge was refused: a call would have taken more than the
+    /// steps left. A call that spends its last step and is then refused for
+    /// its memory has spent all of them too, so [`Budget::spent`] does not
+    /// tell the two refusals apart; on a budget made for one call, this
+    /// does. A budget's steps are spent across every call it covers, and
+    /// this stays set for its later calls as they stay spent, whether
+    /// those calls are refused or answer.
+    pub fn over_budget(&self) -> bool {
+        self.over
+    }
+
     pub(crate) fn charge(&mut self, steps: u64) -> Result<(), Error> {
         if self.left < steps {
             self.left = 0;
+            self.over = true;
             return Err(Error::Limit(format!(
                 "the call would take more than its budget of {} steps",
                 self.limit

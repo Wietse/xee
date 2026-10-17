@@ -703,6 +703,47 @@ fn the_sets_have_a_ceiling() {
     ok(&"[a]".repeat(n / 3), "");
 }
 
+/// XSD 1.1 §G.4.2.4's set for an unknown block name, every character, is
+/// one range, and counts against the ceiling on character sets as a known
+/// block of one range does: after as many `\w` as fit, the two tip the
+/// pattern over the ceiling at the same count, as an escape and as a
+/// class's part.
+#[test]
+fn an_unknown_block_counts_against_the_set_ceiling() {
+    let refused = |p: &str| match Regex::xsd(p) {
+        Ok(_) => false,
+        Err(Error::Limit(m)) if m.contains("character sets exceed") => true,
+        Err(e) => panic!("expected the set ceiling or none, got {e}"),
+    };
+    // The least `n` up to `max` for which `over(n)`, `over` monotone.
+    let least = |over: &dyn Fn(usize) -> bool, max: usize| -> Option<usize> {
+        if !over(max) {
+            return None;
+        }
+        let (mut lo, mut hi) = (0, max);
+        while lo < hi {
+            let mid = (lo + hi) / 2;
+            if over(mid) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        Some(hi)
+    };
+    let words = least(&|n| refused(&"\\w".repeat(n)), 10_000).expect("over the ceiling") - 1;
+    let w = "\\w".repeat(words);
+    let tip = |escape: &str| least(&|n| refused(&format!("{w}{}", escape.repeat(n))), 1_000);
+    for (known, unknown) in [
+        ("\\p{IsBasicLatin}", "\\p{IsNoSuchBlock}"),
+        ("[\\p{IsBasicLatin}]", "[\\p{IsNoSuchBlock}]"),
+    ] {
+        let at = tip(known);
+        assert!(at.is_some_and(|n| n > 0), "{known}: {at:?}");
+        assert_eq!(tip(unknown), at, "{unknown}");
+    }
+}
+
 #[test]
 fn nesting_has_a_ceiling() {
     let d = parse::MAX_DEPTH;

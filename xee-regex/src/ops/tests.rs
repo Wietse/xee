@@ -489,6 +489,54 @@ fn the_xsd_dialect_is_refused_at_its_budget() {
     }
 }
 
+/// A call refused at a charge is over its budget. One that spends its last
+/// step and is then refused for its memory has spent its whole budget too,
+/// and is not.
+#[test]
+fn a_budget_says_whether_a_charge_refused_the_call() {
+    let r = xsd("([a-z]+)");
+    let hay = "a".repeat(1000);
+    let op = |b: &mut Budget| r.replace(&hay, "[$1]", b).map(|_| ());
+    // The steps the replacement takes before its memory refuses it.
+    let mut ample = Budget::with_memory(STEPS, 1000);
+    limit(op(&mut ample), "memory");
+    assert!(!ample.over_budget());
+    let steps = ample.spent();
+    assert!(steps > 1, "{steps}");
+    // Given exactly those steps, it spends every one and is refused for
+    // its memory.
+    let mut exact = Budget::with_memory(steps, 1000);
+    limit(op(&mut exact), "memory");
+    assert_eq!(exact.spent(), steps);
+    assert!(!exact.over_budget());
+    // One fewer, and a charge refuses it.
+    let mut short = Budget::with_memory(steps - 1, 1000);
+    limit(op(&mut short), "budget");
+    assert_eq!(short.spent(), steps - 1);
+    assert!(short.over_budget());
+    // Nothing refuses a call that answers.
+    let mut answered = Budget::new(STEPS);
+    op(&mut answered).unwrap();
+    assert!(!answered.over_budget());
+    // On a budget that covers several calls, the flag stays set as the
+    // steps stay spent: a later call refused for its memory, before it
+    // charges a step, still reads over budget.
+    let mut shared = Budget::with_memory(10, 16);
+    limit(
+        re("a*b", "").replace("ab", &"x".repeat(20), &mut shared),
+        "budget",
+    );
+    assert!(shared.over_budget());
+    let fresh = |b: &mut Budget| re("a?", "").is_match("ab", b);
+    limit(fresh(&mut Budget::with_memory(10, 16)), "memory");
+    limit(fresh(&mut shared), "memory");
+    assert!(shared.over_budget());
+    // And a later call that charges nothing and answers.
+    assert_eq!(re("a*b", "").replace("", "", &mut shared).unwrap(), "");
+    assert!(shared.over_budget());
+    assert_eq!(shared.spent(), 10);
+}
+
 /// Plan D11's capture model: a quantifier that takes no iteration unsets
 /// the groups inside it; otherwise a group keeps its last value.
 #[test]

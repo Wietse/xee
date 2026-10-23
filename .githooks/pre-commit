@@ -43,6 +43,48 @@ run_step() {
     fi
 }
 
+# Every action a workflow uses is pinned to a commit, the version tag it
+# was resolved from in a trailing comment (xbrlstd-rs ADR220, "The
+# workflows' own actions"; its tests/l0_gate_filter.rs holds the same
+# form there). A line holding a `uses` key — bare, quoted or with a
+# space before its colon — that is not
+# `uses: <owner>/<repo>[/<path>]@<40 hex> # v<version>` fails, and so
+# does a line the grep reads no key from: one opening with YAML's
+# explicit key or value indicator (`? uses`, `: ref`) or an alias
+# (`*k :`), or holding a double-quoted key with an escape (`"\x75ses":`).
+# A longer word ending in `uses` (`statuses: write`) is not the key.
+# Whole-line comments pass. Both workflow extensions are read; no
+# workflow file, or a grep that fails over one, is a failure.
+# Dependabot's pull request is how a pin moves.
+check_action_pins() {
+    local files nullglob_was key explicit escaped lines status unpinned
+    nullglob_was=$(shopt -p nullglob)
+    shopt -s nullglob
+    files=(.github/workflows/*.yml .github/workflows/*.yaml)
+    eval "$nullglob_was"
+    if [ "${#files[@]}" -eq 0 ]; then
+        printf 'pre-commit: no workflow file under .github/workflows/\n' >&2
+        return 1
+    fi
+    key="(^|[^[:alnum:]_-])['\"]?uses['\"]?[[:space:]]*:"
+    explicit="^[[:space:]]*(- )?([?:]( |\$)|\\*)"
+    escaped="\"[^\"]*\\\\[^\"]*\"[[:space:]]*:"
+    lines=$(grep -n -H -E "$key|$explicit|$escaped" "${files[@]}")
+    status=$?
+    if [ "$status" -gt 1 ]; then
+        printf 'pre-commit: grep failed over the workflow files (exit %s)\n' "$status" >&2
+        return 1
+    fi
+    unpinned=$(printf '%s\n' "$lines" \
+        | grep -v -E '^[^:]+:[0-9]+:[[:space:]]*#' \
+        | grep -v -E '^[^:]+:[0-9]+:[[:space:]]*(- )?uses: [A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_./-]*@[0-9a-f]{40} # v[0-9]+(\.[0-9]+)*$')
+    if [ -n "$unpinned" ]; then
+        printf '%s\n' "$unpinned" >&2
+        printf 'pre-commit: a workflow line above is not `uses: <owner>/<repo>@<commit> # v<version>`\n' >&2
+        return 1
+    fi
+}
+run_step "action pins"              check_action_pins
 run_step "cargo fmt --check --all"  cargo fmt --check --all
 run_step "cargo clippy -D warnings" cargo clippy --all-targets --all-features -- -D warnings
 run_step "cargo test --workspace"   cargo test --workspace

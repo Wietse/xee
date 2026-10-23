@@ -1,0 +1,14 @@
+# Dependabot proposes the moves of the commit-pinned actions in
+# .github/workflows/ (xbrlstd-rs ADR220, "The workflows' own actions"):
+# one grouped pull request a week, the version comment beside each SHA
+# moved with it. No cargo entry: the lockfile moves in upgrade rounds,
+# with Dependabot alerts, a repository setting, as the notice.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

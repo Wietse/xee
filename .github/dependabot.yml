@@ -3,12 +3,18 @@
 # one grouped pull request a week, the version comment beside each SHA
 # moved with it. No cargo entry: the lockfile moves in upgrade rounds,
 # with Dependabot alerts, a repository setting, as the notice.
+# The cooldown proposes a release only once its version tag is dated
+# three days back (xbrlstd-rs ADR220, which says what that does not
+# hold back). GitHub's default for version updates is the same; it is
+# written here so that the rule does not rest on that default.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 3
     groups:
       actions:
         patterns: ["*"]
